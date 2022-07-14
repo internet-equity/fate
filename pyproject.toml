@@ -1,13 +1,13 @@
 [tool.poetry]
-name = "netrics-measurements"
+name = "fate-scheduler"
 version = "0.0.1"
-description = "The extensible network measurements framework"
+description = "The operating system-level command scheduler and manager."
 license = "MIT"
 authors = [
   "Jesse London <jesselondon@gmail.com>",
   "Kyle MacMillan <macmillan@uchicago.edu>",
 ]
-packages = [{include = "netrics", from = "src"}]
+packages = [{include = "fate", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -21,7 +21,7 @@ argcmdr = {url = "https://github.com/dssg/argcmdr/archive/0.12.0.zip"}
 [tool.poetry.dev-dependencies]
 
 [tool.poetry.scripts]
-netrics = "netrics:main"
+fate = "fate:main"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

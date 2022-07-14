@@ -9,9 +9,9 @@ import plumbum.commands.base
 
 
 class Executor(argcmdr.Local):
-    """Base class for commands that execute measurements.
+    """Base class for Fate commands that execute tasks.
 
-    Subclasses must define `get_command` to specify the measurement name
+    Subclasses must define `get_command` to specify the task name
     (if any) and command to execute.
 
     """
@@ -21,7 +21,7 @@ class Executor(argcmdr.Local):
     )
 
     class CommandStatus(enum.Enum):
-        """Status categories of measurement command return codes."""
+        """Status categories of task command return codes."""
 
         OK = 0
         Retry = 42
@@ -56,7 +56,7 @@ class Executor(argcmdr.Local):
 
     @classmethod
     def print_report(cls, name, command, retcode, stdout, stderr):
-        """Print a report of measurement command execution outcomes."""
+        """Print a report of task command execution outcomes."""
         print('Name:', '-' if name is None else name)
 
         # If we're composing the command with "echo" or otherwise providing
@@ -85,7 +85,7 @@ class Executor(argcmdr.Local):
         super().__init__(parser)
 
         # argcmdr built-in arguments (@)
-        # netrics added-in arguments (%)
+        # fate added-in arguments (%)
 
         # (@) never print commands to be executed
         #     (we handle this in the report):
@@ -126,7 +126,7 @@ class Executor(argcmdr.Local):
             help="print command output (in addition to report)",
         )
 
-        # (%) silence netrics command execution report:
+        # (%) silence fate command execution report:
         parser.add_argument(
             '--no-report',
             action='store_false',
@@ -135,27 +135,27 @@ class Executor(argcmdr.Local):
         )
 
     def get_command(self, args):
-        """Determine measurement name (if any) and command to execute
+        """Determine task name (if any) and command to execute
         from CLI argumentation.
 
         Returns either just a command to execute -- plumbum
-        `BaseCommand` -- or a tuple of the measurement name and the
+        `BaseCommand` -- or a tuple of the task name and the
         command -- `(str, BaseCommand)`.
 
         """
         super(argcmdr.Local, self).__call__(args)
 
     def prepare(self, args):
-        """Execute and report on measurement command execution."""
+        """Execute and report on task command execution."""
         command_args = self.call(args, 'get_command')
 
         if command_args is None:
             return
 
         if isinstance(command_args, (list, tuple)):
-            (measurement_name, command) = command_args
+            (task_name, command) = command_args
         else:
-            (measurement_name, command) = (None, command_args)
+            (task_name, command) = (None, command_args)
 
         (retcode, stdout, stderr) = yield command
 
@@ -168,7 +168,7 @@ class Executor(argcmdr.Local):
             stderr = f'[See {args.stderr.name}]'
 
         if args.report:
-            self.print_report(measurement_name, command, retcode, stdout, stderr)
+            self.print_report(task_name, command, retcode, stdout, stderr)
 
     # Raise no exceptions for command return codes:
     prepare.retcode = None

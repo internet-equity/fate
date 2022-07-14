@@ -1,37 +1,37 @@
-= Netrics
+= Fate
 
-The (network) measurements execution framework.
+The operating system-level command scheduler and manager.
 
 TODO: Objectives/justifications; features; installation and quick start-up....
 
-== Development
+== Creating tasks
 
-=== Novel measurements
+Fate tasks are merely executables available through the file system. Tasks abiding by the framework's expectations may be added with a minimum of effort.
 
-The Netrics framework invokes executables available to the operating system. As such, built-in measurements enjoy next-to-nil privilege relative to any other installed executable; and, measurements abiding by the framework's expectations may be added with a minimum of effort.
-
-==== The contract
+=== The contract
 
 TODO
 
-==== Testing
+=== Testing
 
-Any executable may be invoked (with optional arguments) by the Netrics `execute` command:
+Any executable may be invoked (with optional arguments) by the Fate `execute` command:
 
 [source,sh]
 ----
-netrics execute [options] command [arguments]
+fate debug execute [options] command [arguments]
 ----
 
 The above generates an execution report for use in development and debugging.
 
 Options such as `-i|--stdin` may be useful to supply measurment parameters to the executable according to the link:#_the_contract[framework's contract].
 
+== Development
+
 === Extending the framework
 
 ==== Set-up
 
-The Netrics framework is implemented in https://www.python.org/[Python] and the framework's distribution is managed via https://python-poetry.org/[Poetry].
+Fate is implemented in https://www.python.org/[Python] and the framework's distribution is managed via https://python-poetry.org/[Poetry].
 
 *Python v3.10* may be supplied by an operating system package manager, by https://www.python.org/[python.org], or by a utility such as https://github.com/pyenv/pyenv[pyenv]; pyenv is _recommended_ for development but _not required_.
 
@@ -48,11 +48,11 @@ poetry install
 
 NOTE: Poetry will use any existing, activated virtual environment, or create its own into which dependencies will be installed.
 
-The `netrics` command is now available for use in your development environment.
+The `fate` command is now available for use in your development environment.
 
 [IMPORTANT]
 ====
-For simplicity, it will be presumed that `netrics` is available on your `PATH`. However, this depends upon activation of your virtual environment.
+For simplicity, it will be presumed that `fate` is available on your `PATH`. However, this depends upon activation of your virtual environment.
 
 A virtual environment under management by Poetry may be activated via sub-shell with:
 
@@ -65,6 +65,6 @@ Alternatively, any command installed into Poetry's virtual environment may be ex
 
 [source,sh]
 ----
-poetry run netrics ...
+poetry run fate ...
 ----
 ====

@@ -1,7 +1,7 @@
 import argparse
 import os.path
 
-from .. import Netrics, runcmd
+from .. import Fate, runcmd
 
 
 READABLE = argparse.FileType('r')
@@ -24,7 +24,7 @@ def path_or_text(value):
     return value
 
 
-@Netrics.register
+@Fate.register
 @runcmd('arguments', metavar='command-arguments', nargs=argparse.REMAINDER,
         help="command arguments (optional)")
 @runcmd('command', help="program to execute")
@@ -32,7 +32,7 @@ def path_or_text(value):
         help="set standard input (parameterization) for command to given path "
              "or text (specify '-' to pass through stdin)")
 def execute(context, args):
-    """execute an arbitrary program as an ad-hoc measurement"""
+    """execute an arbitrary program as an ad-hoc task"""
     cmd = context.local[args.command][args.arguments]
 
     if hasattr(args.stdin, 'read'):
