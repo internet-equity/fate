@@ -1,8 +1,9 @@
 [tool.poetry]
 name = "fate-scheduler"
-version = "0.0.1"
+version = "0.0.1.post1"
 description = "The operating system-level command scheduler and manager."
 license = "MIT"
+repository = "https://github.com/chicago-cdac/fate"
 authors = [
   "Jesse London <jesselondon@gmail.com>",
   "Kyle MacMillan <macmillan@uchicago.edu>",
