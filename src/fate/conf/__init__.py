@@ -1,7 +1,7 @@
 import functools
 
 from .base import ConfGroup
-from .error import ConfValueError, MultiConfError, NoConfError  # noqa: F401
+from .error import ConfSyntaxError, ConfValueError, MultiConfError, NoConfError  # noqa: F401
 
 
 spec = ConfGroup._Spec

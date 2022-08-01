@@ -12,7 +12,7 @@ from .datastructure import (
     SimpleEnum,
     StrEnum,
 )
-from .error import MultiConfError, NoConfError
+from .error import ConfSyntaxError, MultiConfError, NoConfError
 from .format import Loader
 from .path import SystemPrefix
 from .types import TaskConf
@@ -83,7 +83,11 @@ class Conf(NestingConf, LazyLoadDict, AttributeDict):
 
     def __getdata__(self):
         dict_ = (self.__types__ and self.__types__.get('dict')) or self._ConfType[['dict_']]
-        return self._loader_(self.__path__, dict_=dict_)
+
+        try:
+            return self._loader_(self.__path__, dict_=dict_)
+        except self._loader_.raises as exc:
+            raise ConfSyntaxError(self._loader_.name, exc)
 
     @classmethod
     def fromkeys(cls, _iterable, _value=None):

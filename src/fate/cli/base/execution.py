@@ -147,6 +147,9 @@ class Executor(argcmdr.Local):
             paths = ', '.join(exc.paths)
             parser.exit(64, f'{parser.prog}: error: multiple configuration file '
                             f'formats at overlapping paths: {paths}\n')
+        except fate.conf.ConfSyntaxError as exc:
+            parser.exit(65, f'{parser.prog}: error: could not decode {exc.format.upper()}: '
+                            f'{exc.decode_err}\n')
         except fate.conf.NoConfError as exc:
             parser.exit(72, f'{parser.prog}: error: missing configuration file (tried: {exc})\n')
         except fate.conf.ConfValueError as exc:

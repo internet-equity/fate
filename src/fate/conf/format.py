@@ -71,7 +71,14 @@ class _NameList:
         return [member.name for member in cls]
 
 
-class SLoader(_NameList, FileFormatEnum, CallableEnum):
+class _Raises:
+
+    @property
+    def raises(self):
+        return getattr(self.value, 'raises', ())
+
+
+class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
 
     @CallableEnum.member
     @raises(csv.Error)
@@ -105,18 +112,16 @@ class SLoader(_NameList, FileFormatEnum, CallableEnum):
     def auto(self):
         return getattr(self.value, 'auto', False)
 
-    @property
-    def raises(self):
-        return getattr(self.value, 'raises', ())
 
-
-class Loader(FileFormatEnum, CallableEnum):
+class Loader(_Raises, FileFormatEnum, CallableEnum):
 
     @CallableEnum.member
+    @raises(toml.decoder.TomlDecodeError)
     def toml(path, dict_=dict):
         return toml.load(path, _dict=dict_)
 
     @CallableEnum.member
+    @raises(yaml.error.YAMLError)
     def yaml(path, dict_=dict):
         with open(path) as fd:
             return SLoader.yaml(fd, dict_=dict_)
