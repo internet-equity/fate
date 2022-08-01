@@ -1,11 +1,13 @@
 import argparse
 import enum
 import functools
-import sys
+import re
 import textwrap
 
 import argcmdr
 import plumbum.commands.base
+
+import fate.conf
 
 
 class Executor(argcmdr.Local):
@@ -79,7 +81,7 @@ class Executor(argcmdr.Local):
 
         if stderr:
             print()
-            cls.print_output('Standard error', stderr)
+            cls.print_output('Logged (standard error)', stderr)
 
     def __init__(self, parser):
         super().__init__(parser)
@@ -134,6 +136,22 @@ class Executor(argcmdr.Local):
             help="do not print command report",
         )
 
+    @property
+    def conf(self):
+        return self.root.conf
+
+    def __call__(self, args, parser):
+        try:
+            super().__call__(args)
+        except fate.conf.MultiConfError as exc:
+            paths = ', '.join(exc.paths)
+            parser.exit(64, f'{parser.prog}: error: multiple configuration file '
+                            f'formats at overlapping paths: {paths}\n')
+        except fate.conf.NoConfError as exc:
+            parser.exit(72, f'{parser.prog}: error: missing configuration file (tried: {exc})\n')
+        except fate.conf.ConfValueError as exc:
+            parser.exit(78, f'{parser.prog}: error: {exc}\n')
+
     def get_command(self, args):
         """Determine task name (if any) and command to execute
         from CLI argumentation.
@@ -145,19 +163,40 @@ class Executor(argcmdr.Local):
         """
         super(argcmdr.Local, self).__call__(args)
 
-    def prepare(self, args):
+    def prepare(self, args, parser):
         """Execute and report on task command execution."""
-        command_args = self.call(args, 'get_command')
+        try:
+            command_spec = self.call(args, 'get_command')
+        except self.local.CommandNotFound as exc:
+            hint = ('\nhint: whitespace in program name suggests a misconfiguration'
+                    if re.search(r'\s', exc.program) else '')
+            parser.exit(127, f'{parser.prog}: error: {exc.program}: '
+                             f'command not found on path{hint}\n')
 
-        if command_args is None:
+        if command_spec is None:
             return
+
+        if send := getattr(command_spec, 'send', None):
+            command_args = next(command_spec)
+        else:
+            command_args = command_spec
 
         if isinstance(command_args, (list, tuple)):
             (task_name, command) = command_args
         else:
             (task_name, command) = (None, command_args)
 
-        (retcode, stdout, stderr) = yield command
+        result = yield command
+
+        if send:
+            try:
+                send(result)
+            except StopIteration:
+                pass
+            else:
+                raise ValueError("get_command() generated more than one command")
+
+        (retcode, stdout, stderr) = result
 
         if args.stdout and stdout is not None:
             print(stdout, end='', file=args.stdout)

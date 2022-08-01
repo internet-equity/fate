@@ -1,1 +1,1 @@
-from .execution import runcmd
+from .execution import runcmd  # noqa: F401

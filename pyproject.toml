@@ -15,9 +15,11 @@ python = "^3.10"
 #
 # FIXME: See dssg/argcmdr#27
 #
-# argcmdr = "^0.12"
+# argcmdr = "^0.13"
 #
-argcmdr = {url = "https://github.com/dssg/argcmdr/archive/0.12.0.zip"}
+argcmdr = {url = "https://github.com/dssg/argcmdr/archive/0.13.0.zip"}
+pyyaml = "^6.0"
+toml = "^0.10.2"
 
 [tool.poetry.dev-dependencies]
 

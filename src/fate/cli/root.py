@@ -1,6 +1,10 @@
+from functools import partial
+
 import argcmdr
+from descriptors import cachedproperty
 
 import fate.cli.command
+import fate.conf
 
 
 class Fate(argcmdr.RootCommand):
@@ -16,12 +20,23 @@ class Fate(argcmdr.RootCommand):
 
         return parser
 
+    @cachedproperty
+    def conf(self):
+        (args, kwargs) = self.args.__confspec__ or ((), {})
+        return fate.conf.get(*args, **kwargs)
 
-def main():
+
+def extend_parser(parser, confspec):
+    parser.set_defaults(
+        __confspec__=confspec,
+    )
+
+
+def main(confspec=None):
     # auto-discover nested commands
     argcmdr.init_package(
         fate.cli.command.__path__,
         fate.cli.command.__name__,
     )
 
-    argcmdr.main(Fate)
+    argcmdr.main(Fate, extend_parser=partial(extend_parser, confspec=confspec))
