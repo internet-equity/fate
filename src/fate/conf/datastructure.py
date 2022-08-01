@@ -174,6 +174,19 @@ class NestingConf:
     _undefined_ = object()
 
     def __adopt__(self, name, mapping):
+        depth0 = getattr(self, '__depth__', -1)
+
+        if depth0 is None:
+            # abort! we might be mid-loading.
+            return
+
+        depth1 = depth0 + 1
+
+        if mapping.__depth__ is None:
+            mapping.__depth__ = depth1
+        else:
+            assert mapping.__depth__ == depth1
+
         if mapping.__name__ is self._undefined_:
             mapping.__name__ = name
         else:
@@ -183,17 +196,6 @@ class NestingConf:
             mapping.__parent__ = self
         else:
             assert mapping.__parent__ is self
-
-        depth0 = getattr(self, '__depth__', -1)
-
-        assert depth0 is not None
-
-        depth1 = depth0 + 1
-
-        if mapping.__depth__ is None:
-            mapping.__depth__ = depth1
-        else:
-            assert mapping.__depth__ == depth1
 
     def __getitem__(self, key):
         value = super().__getitem__(key)
