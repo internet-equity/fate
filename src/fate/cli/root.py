@@ -22,21 +22,23 @@ class Fate(argcmdr.RootCommand):
 
     @cachedproperty
     def conf(self):
-        (args, kwargs) = self.args.__confspec__ or ((), {})
-        return fate.conf.get(*args, **kwargs)
+        if conf := self.args.__conf__:
+            return conf
+
+        return fate.conf.get()
 
 
-def extend_parser(parser, confspec):
+def extend_parser(parser, conf):
     parser.set_defaults(
-        __confspec__=confspec,
+        __conf__=conf,
     )
 
 
-def main(confspec=None):
+def main(conf=None):
     # auto-discover nested commands
     argcmdr.init_package(
         fate.cli.command.__path__,
         fate.cli.command.__name__,
     )
 
-    argcmdr.main(Fate, extend_parser=partial(extend_parser, confspec=confspec))
+    argcmdr.main(Fate, extend_parser=partial(extend_parser, conf=conf))
