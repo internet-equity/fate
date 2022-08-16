@@ -6,6 +6,8 @@ import typing
 
 from descriptors import classonlymethod
 
+from fate.util.compat.path import is_relative_to
+
 
 class PrefixPaths(typing.NamedTuple):
     """Collection and constructor of relevant filesystem paths."""
@@ -27,7 +29,8 @@ class PrefixPaths(typing.NamedTuple):
 
             home = pathlib.Path.home()
 
-            if pathlib.Path(__file__).is_relative_to(home):
+            # compat: Python <3.9
+            if is_relative_to(pathlib.Path(__file__), home):
                 # module installed under a user home directory
                 # use XDG_CONFIG_HOME, etc.
                 return cls(
