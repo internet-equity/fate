@@ -1,5 +1,4 @@
 import argparse
-import enum
 import functools
 import re
 import textwrap
@@ -7,10 +6,10 @@ import textwrap
 import argcmdr
 import plumbum.commands.base
 
-import fate.conf
+from .common import CommandInterface
 
 
-class Executor(argcmdr.Local):
+class OneOffExecutor(CommandInterface, argcmdr.Local):
     """Base class for Fate commands that execute tasks.
 
     Subclasses must define `get_command` to specify the task name
@@ -21,29 +20,6 @@ class Executor(argcmdr.Local):
         plumbum.commands.base.StdinRedirection,
         plumbum.commands.base.StdinDataRedirection,
     )
-
-    class CommandStatus(enum.Enum):
-        """Status categories of task command return codes."""
-
-        OK = 0
-        Retry = 42
-        Error = -1  # any other
-
-        @classmethod
-        def status(cls, code):
-            """Retrieve appropriate status for given return code."""
-            value = int(code)
-
-            try:
-                return cls(value)
-            except ValueError:
-                if value > 0:
-                    return cls.Error
-
-                raise
-
-        def __str__(self):
-            return self.name
 
     @staticmethod
     def print_output(name, text):
@@ -81,7 +57,10 @@ class Executor(argcmdr.Local):
 
         if stderr:
             print()
-            cls.print_output('Logged (standard error)', stderr)
+
+            # make fate task logging separators -- null byte -- visual
+            stderr_formatted = stderr.replace('\0', '\n\n').strip() + '\n'
+            cls.print_output('Logged (standard error)', stderr_formatted)
 
     def __init__(self, parser):
         super().__init__(parser)
@@ -136,24 +115,9 @@ class Executor(argcmdr.Local):
             help="do not print command report",
         )
 
-    @property
-    def conf(self):
-        return self.root.conf
-
-    def __call__(self, args, parser):
-        try:
+    def __call__(self, args):
+        with self.exit_on_error:
             super().__call__(args)
-        except fate.conf.MultiConfError as exc:
-            paths = ', '.join(exc.paths)
-            parser.exit(64, f'{parser.prog}: error: multiple configuration file '
-                            f'formats at overlapping paths: {paths}\n')
-        except fate.conf.ConfSyntaxError as exc:
-            parser.exit(65, f'{parser.prog}: error: could not decode {exc.format.upper()}: '
-                            f'{exc.decode_err}\n')
-        except fate.conf.NoConfError as exc:
-            parser.exit(72, f'{parser.prog}: error: missing configuration file (tried: {exc})\n')
-        except fate.conf.ConfValueError as exc:
-            parser.exit(78, f'{parser.prog}: error: {exc}\n')
 
     def get_command(self, args):
         """Determine task name (if any) and command to execute
@@ -216,8 +180,8 @@ class Executor(argcmdr.Local):
     prepare.retcode = None
 
 
-"""Decorator to manufacture Executor commands from a simple function
-defining method `get_command`.
+"""Decorator to manufacture OneOffExecutor commands from a simple
+function defining method `get_command`.
 
 """
-runcmd = functools.partial(argcmdr.cmd, base=Executor, method_name='get_command')
+runcmd = functools.partial(argcmdr.cmd, base=OneOffExecutor, method_name='get_command')

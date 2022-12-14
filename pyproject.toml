@@ -15,16 +15,24 @@ python = "^3.8"
 #
 # FIXME: See dssg/argcmdr#27
 #
-# argcmdr = "^0.13"
+# argcmdr = "^0.13.1"
 #
-argcmdr = {url = "https://github.com/dssg/argcmdr/archive/0.13.0.zip"}
+argcmdr = {url = "https://github.com/dssg/argcmdr/archive/0.13.1.zip"}
+croniter = "^1.3.5"
+loguru = "^0.6.0"
 pyyaml = "^6.0"
 toml = "^0.10.2"
 
 [tool.poetry.dev-dependencies]
+# Note: poetry, et al, currently feature no facility to *do* anything
+# with this optional, dev requirement. rather, this is listed purely as
+# metadata record or note.
+ipdb = {version = "^0.13.9", optional = true}
 
 [tool.poetry.scripts]
 fate = "fate:main"
+fates = "fate:serve"
+fated = "fate:daemon"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

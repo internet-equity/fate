@@ -1,44 +1,37 @@
 from functools import partial
 
 import argcmdr
-from descriptors import cachedproperty
 
 import fate.cli.command
-import fate.conf
+from fate.cli.base import Main
 
 
-class Fate(argcmdr.RootCommand):
-    """manage the periodic execution of commands"""
-
-    @classmethod
-    def base_parser(cls):
-        parser = super().base_parser()
-
-        # enforce program name when invoked via "python -m fate"
-        if parser.prog == '__main__.py':
-            parser.prog = 'fate'
-
-        return parser
-
-    @cachedproperty
-    def conf(self):
-        if conf := self.args.__conf__:
-            return conf
-
-        return fate.conf.get()
-
-
-def extend_parser(parser, conf):
+def extend_parser(parser, conf=None, banner_path=None):
     parser.set_defaults(
         __conf__=conf,
+        __banner_path__=banner_path,
     )
 
 
-def main(conf=None):
+def entrypoint(root, **settings):
     # auto-discover nested commands
     argcmdr.init_package(
         fate.cli.command.__path__,
         fate.cli.command.__name__,
     )
 
-    argcmdr.main(Fate, extend_parser=partial(extend_parser, conf=conf))
+    if isinstance(root, str):
+        # lazily look up nested command signature
+        names = root.split('.')
+        root = fate.cli.command
+        for name in names:
+            root = getattr(root, name)
+
+    argcmdr.main(root, extend_parser=partial(extend_parser, **settings))
+
+
+main = partial(entrypoint, Main)
+
+daemon = partial(entrypoint, 'control.Daemon')
+
+serve = partial(entrypoint, 'control.Serve')

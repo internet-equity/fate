@@ -3,7 +3,9 @@ import argparse
 import os.path
 import sys
 
-from .. import Fate, runcmd
+from fate.conf import ResultEncodingError
+
+from .. import Main, runcmd
 
 
 READABLE = argparse.FileType('r')
@@ -26,7 +28,7 @@ def path_or_text(value):
     return value
 
 
-@Fate.register
+@Main.register
 class Debug(argcmdr.Command):
     """ad-hoc execution commands"""
 
@@ -81,21 +83,18 @@ class Debug(argcmdr.Command):
         (retcode, stdout, stderr) = yield (args.task, bound)
 
         if args.record and retcode == 0:
-            result_path = spec.path_.result_(stdout)
+            try:
+                result_path = spec.path_._result_(stdout)
+            except ResultEncodingError as exc:
+                result_path = exc.identifier
 
-            if result_path.exists():
-                raise FileExistsError(result_path)
+                print(f"result does not appear to be encoded as {exc.format}:",
+                      "will write to file without suffix",
+                      file=sys.stderr)
 
-            if not result_path.parent.exists():
-                try:
-                    result_path.parent.mkdir(parents=True)
-                except NotADirectoryError:
-                    pass
-
-            if result_path.parent.is_dir():
-                with result_path.open('w') as fd:
-                    print(stdout, end='', file=fd)
-            else:
+            try:
+                context.write_result(result_path, stdout)
+            except NotADirectoryError as exc:
                 print('cannot record result: path or sub-path is not a directory:',
-                      result_path.parent,
+                      exc.filename,
                       file=sys.stderr)
