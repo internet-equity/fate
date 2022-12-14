@@ -21,6 +21,9 @@ class PrefixPaths(typing.NamedTuple):
     # library (retry records) and task state
     state: pathlib.Path
 
+    # run (lock) files
+    run: pathlib.Path
+
     @classonlymethod
     def _find(cls):
         """Determine paths appropriate to environment."""
@@ -43,6 +46,9 @@ class PrefixPaths(typing.NamedTuple):
                     state=(pathlib.Path(xdg_state)
                           if (xdg_state := os.getenv('XDG_STATE_HOME'))
                           else home / '.local' / 'state'),
+                    run=(pathlib.Path(xdg_runtime)
+                         if (xdg_runtime := os.getenv('XDG_RUNTIME_DIR'))
+                         else home / '.local' / 'run'),
                 )
             else:
                 # appears global: install global
@@ -50,6 +56,7 @@ class PrefixPaths(typing.NamedTuple):
                     conf=pathlib.Path('/etc/'),
                     data=pathlib.Path('/var/log/'),
                     state=pathlib.Path('/var/lib/'),
+                    run=pathlib.Path('/run/'),
                 )
         else:
             # looks like a virtualenv
@@ -58,6 +65,7 @@ class PrefixPaths(typing.NamedTuple):
                 conf=pathlib.Path(sys.prefix),
                 data=pathlib.Path(sys.prefix),
                 state=pathlib.Path(sys.prefix),
+                run=pathlib.Path(sys.prefix),
             )
 
     def _aspairs(self):

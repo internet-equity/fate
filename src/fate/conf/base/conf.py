@@ -1,24 +1,26 @@
 """In-memory access to supported configuration files."""
-import typing
 from types import SimpleNamespace
 
 from descriptors import cachedproperty
 
-from .datastructure import (
+from fate.util.datastructure import (
     AttributeDict,
-    LazyLoadDict,
-    NamedTupleEnum,
+    AttributeAccessMap,
+    LazyLoadProxyMapping,
     NestingConf,
     SimpleEnum,
-    StrEnum,
 )
-from .error import ConfSyntaxError, MultiConfError, NoConfError
-from .format import Loader
-from .path import SystemPrefix
-from .types import TaskConf
+from fate.util.format import Loader
+
+from ..error import (
+    ConfSyntaxError,
+    MultiConfError,
+    NoConfError,
+)
+from ..path import SystemPrefix
 
 
-class Conf(NestingConf, LazyLoadDict, AttributeDict):
+class Conf(AttributeAccessMap, NestingConf, LazyLoadProxyMapping):
     """Dictionary- and object-style access to a configuration file."""
 
     _Format = Loader
@@ -26,6 +28,7 @@ class Conf(NestingConf, LazyLoadDict, AttributeDict):
     class _ConfType(SimpleEnum):
 
         dict_ = AttributeDict
+        list_ = list
 
     def __init__(self, name, lib, filename=None, types=None, **others):
         super().__init__()
@@ -41,7 +44,7 @@ class Conf(NestingConf, LazyLoadDict, AttributeDict):
         else:
             filename = f", filename={self.__filename__!r}"
 
-        default = super().__repr__()
+        default = repr(dict(self))
 
         return (f"<{self.__class__.__name__}"
                 f"({self.__name__!r}, {self.__lib__!r}{filename}) "
@@ -82,63 +85,18 @@ class Conf(NestingConf, LazyLoadDict, AttributeDict):
         return self._Format[self._format_]
 
     def __getdata__(self):
-        dict_ = (self.__types__ and self.__types__.get('dict')) or self._ConfType[['dict_']]
+        types = {
+            conf_type.name: (
+                self.__types__ and self.__types__.get(conf_type.name.rstrip('_'))
+            ) or conf_type.value
+            for conf_type in self._ConfType
+        }
 
         try:
-            return self._loader_(self.__path__, dict_=dict_)
+            return self._loader_(self.__path__, **types)
         except self._loader_.raises as exc:
             raise ConfSyntaxError(self._loader_.name, exc)
 
     @classmethod
     def fromkeys(cls, _iterable, _value=None):
         raise TypeError(f"fromkeys unsupported for type '{cls.__name__}'")
-
-
-class ConfSpec(typing.NamedTuple):
-
-    name: str
-    filename: typing.Optional[str] = None
-    types: typing.Optional[dict] = None
-
-
-class ConfGroup:
-    """Namespaced collection of Conf objects."""
-
-    class _Spec(ConfSpec, NamedTupleEnum):
-
-        task = ConfSpec('task', types={'dict': TaskConf})
-        default = ConfSpec('default')
-
-    class _Default(StrEnum):
-
-        lib = 'fate'
-
-    def __init__(self, *names, lib=None):
-        data = dict(self._iter_conf_(names, lib))
-        self.__dict__.update(data)
-        self.__names__ = tuple(data)
-        self._link_conf_()
-
-    @classmethod
-    def __new_conf__(cls, name, lib=None, filename=None, types=None):
-        return Conf(name, lib or cls._Default.lib, filename, types)
-
-    @classmethod
-    def _iter_conf_(cls, names, lib):
-        for name in (names or cls._Spec):
-            (conf_name, file_name, types) = (name, None, None) if isinstance(name, str) else name
-            yield (conf_name, cls.__new_conf__(conf_name, lib, file_name, types))
-
-    def _link_conf_(self):
-        for name0 in self.__names__:
-            conf0 = getattr(self, name0)
-
-            for name1 in self.__names__:
-                if name1 == name0:
-                    continue
-
-                conf1 = getattr(self, name1)
-                setattr(conf0.__other__, name1, conf1)
-
-    def __repr__(self):
-        return f'<{self.__class__.__name__} [%s]>' % ', '.join(self.__names__)
