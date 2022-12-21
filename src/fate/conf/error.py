@@ -40,8 +40,8 @@ class LogsDecodingError(ValueError, ConfError):
 
 class ResultEncodingError(ValueError, ConfError):
 
-    def __init__(self, format_, error, identifier):
-        super().__init__(format_, error, identifier)
+    def __init__(self, format_, errors, identifier):
+        super().__init__(format_, errors, identifier)
         self.format = format_
-        self.error = error
+        self.errors = errors
         self.identifier = identifier
