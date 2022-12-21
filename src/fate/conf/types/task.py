@@ -255,37 +255,58 @@ class TaskConfType(ConfType):
 
     @at_depth('*.path')
     def _result_(self, stdout, dt=None):
+        result_spec = self.result
+
+        if not result_spec:
+            # empty path.result synonymous with /dev/null: quit
+            return None
+
+        format_ = self.__parent__.format_['result']
+
+        if format_ == 'auto' and not stdout:
+            # auto (unlike mixed) suppresses empty results: quit
+            return None
+
         if dt is None:
             dt = datetime.now()
 
         stamp = dt.timestamp()
         datestr = dt.strftime('%Y%m%dT%H%M%S')
 
-        result_spec = self.result
         result_path = (result_spec if isinstance(result_spec, (pathlib.Path, SystemPrefix))
                        else pathlib.Path(result_spec))
 
         identifier = result_path / f'result-{stamp:.0f}-{datestr}-{self.__parent__.__name__}'
 
-        format_ = self.__parent__.format_['result']
-
         try:
             (_struct, loader) = self._Loader.autoload(stdout, format_)
         except self._Loader.NonAutoError:
-            try:
-                loader = self._Loader[format_]
-            except KeyError:
-                raise ConfValueError(
-                    self._serializer_error.format(
-                        conf_path=f'{self.__parent__.__name__}.format.result',
-                        format_=format_,
-                    )
-                )
+            if isinstance(format_, str) or not isinstance(format_, collections.abc.Iterable):
+                formats = (format_,)
+            else:
+                formats = format_
 
-            try:
-                loader(stdout)
-            except loader.raises as exc:
-                raise ResultEncodingError(format_, exc, identifier)
+            errors = []
+
+            for format1 in formats:
+                try:
+                    loader = self._Loader[format1]
+                except KeyError:
+                    raise ConfValueError(
+                        self._serializer_error.format(
+                            conf_path=f'{self.__parent__.__name__}.format.result',
+                            format_=format1,
+                        )
+                    )
+
+                try:
+                    loader(stdout)
+                except loader.raises as exc:
+                    errors.append(exc)
+                else:
+                    break
+            else:
+                raise ResultEncodingError(format_, errors, identifier)
 
         return identifier.with_suffix(loader.suffix) if loader else identifier
 

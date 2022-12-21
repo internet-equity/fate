@@ -157,7 +157,10 @@ class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
         if not format_:
             return (None, None)
 
-        if format_ == 'auto':
+        if format_ == 'auto' or format_ == 'mixed':
+            if not content:
+                return (None, None)
+
             for loader in cls.__auto__:
                 try:
                     result = loader(content, **types)

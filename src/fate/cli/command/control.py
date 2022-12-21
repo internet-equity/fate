@@ -263,17 +263,21 @@ class ControlCommand(Main):
                 result_path = exc.identifier
 
                 logger.warning(format=exc.format,
-                               error=str(exc.error),
+                               error=(str(exc.errors[0]) if len(exc.errors) == 1
+                                      else [str(error) for error in exc.errors]),
                                msg="bad result encoding for configured format: "
                                    "path suffix ignored")
 
-            try:
-                self.write_result(result_path, task.stdout)
-            except NotADirectoryError as exc:
-                logger.error(f'cannot record result: '
-                             f'path or sub-path is not a directory: {exc.filename}')
-            except PermissionError as exc:
-                logger.error(f'cannot record result: permission denied: {exc.filename}')
+            if result_path:
+                try:
+                    self.write_result(result_path, task.stdout)
+                except NotADirectoryError as exc:
+                    logger.error(f'cannot record result: '
+                                 f'path or sub-path is not a directory: {exc.filename}')
+                except PermissionError as exc:
+                    logger.error(f'cannot record result: permission denied: {exc.filename}')
+            else:
+                logger.debug('result empty or record disabled')
 
     def set_lock(self):
         """Set command's run-time lock.
