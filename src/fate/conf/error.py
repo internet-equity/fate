@@ -45,3 +45,17 @@ class ResultEncodingError(ValueError, ConfError):
         self.format = format_
         self.errors = errors
         self.identifier = identifier
+
+
+class ConfBracketError(ValueError, ConfError):
+
+    message = ('expression SHOULD NOT be enclosed by brackets '
+               'outside of interpolation context')
+
+    def __init__(self, path, evaluation):
+        super().__init__(path, evaluation)
+        self.path = path
+        self.evaluation = evaluation
+
+    def __str__(self):
+        return self.message

@@ -6,6 +6,7 @@ from datetime import datetime
 from enum import IntEnum
 
 import croniter
+import jinja2
 
 from fate.util.compat.cpu import cpu_count
 from fate.util.format import Dumper, SLoader
@@ -18,7 +19,10 @@ from fate.util.datastructure import (
     StrEnum,
 )
 
+from .. import template
+
 from ..error import (
+    ConfBracketError,
     ConfTypeError,
     ConfValueError,
     ResultEncodingError,
@@ -139,11 +143,51 @@ class TaskConfType(ConfType):
                 raise ConfTypeError("ambiguous configuration: specify either "
                                     "task 'command' or 'exec' not both")
 
-            return self['exec']
+            try:
+                return template.render_complex(self['exec'])
+            except jinja2.TemplateError as exc:
+                raise ConfValueError(f"{exc.__class__.__name__} @ {self.__path__}.exec: {exc}")
 
         command = self['command'] if 'command' in self else self.__name__
 
         return f'{self.__lib__}-{command}'
+
+    @at_depth(0)
+    @property
+    def if_(self):
+        if 'if' in self:
+            if 'unless' in self:
+                raise ConfTypeError(f"{self.__name__}: ambiguous configuration: "
+                                    "specify either task 'if' or 'unless' not both")
+
+            (key, negate) = ('if', False)
+        elif 'unless' in self:
+            (key, negate) = ('unless', True)
+        else:
+            return True
+
+        expression = self[key]
+
+        if not isinstance(expression, str):
+            raise ConfTypeError(f'{self.__name__}: "{key}" requires expression '
+                                f"string not: {expression!r}")
+
+        bracket_match = template.variable_pattern.fullmatch(expression.strip())
+
+        target = bracket_match['expr'] if bracket_match else expression
+
+        try:
+            evaluation = template.eval_expr(target)
+        except jinja2.TemplateError as exc:
+            raise ConfValueError(f"{exc.__class__.__name__} @ {self.__path__}.{key}: {exc}")
+
+        predicate = not evaluation if negate else bool(evaluation)
+
+        if bracket_match:
+            path = self.__get_path__(key)[1:]
+            raise ConfBracketError(path, predicate)
+
+        return predicate
 
     @at_depth(0)
     @property

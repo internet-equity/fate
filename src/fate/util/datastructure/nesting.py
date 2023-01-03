@@ -57,6 +57,38 @@ class NestingConf:
         return value
 
 
+class NestedPathProxy:
+    """Extensible and sliceable representation of a NestedConf path."""
+
+    def __init__(self, conf, added):
+        self.conf = conf
+        self.added = added
+
+    def __getitem__(self, item):
+        if not isinstance(item, (slice, int)):
+            raise TypeError('indices must be integers or slices not ' + item.__class__.__name__)
+
+        if isinstance(item, int) and item < 0:
+            raise ValueError('integer indices may not be negative: 0 <= x <= sys.maxsize')
+
+        if self.conf.__name__ is Undefined:
+            return None
+
+        # reverse, include self.conf and exclude top-level collection
+        parents_headless = self.conf.__parents__[:-1]
+        members_path = itertools.chain(reversed(parents_headless), [self.conf])
+
+        slce = (item.start, item.stop, item.step) if isinstance(item, slice) else (item, item + 1)
+        members_sliced = itertools.islice(members_path, *slce)
+
+        member_names = (str(conf.__name__) for conf in members_sliced)
+
+        return '.'.join(itertools.chain(member_names, self.added))
+
+    def __str__(self):
+        return self[:] or ''
+
+
 class NestedConf(NestingConf):
     """Mix-in for members of nested collections to keep track of their
     position in the collection tree.
@@ -91,18 +123,15 @@ class NestedConf(NestingConf):
         return ancestry
 
     @property
-    def __path__(self):
-        if self.__name__ is Undefined:
-            return None
-
-        # reverse, include self and exclude top-level collection
-        parents_headless = self.__parents__[:-1]
-        members_path = itertools.chain(reversed(parents_headless), [self])
-        return '.'.join(str(conf.__name__) for conf in members_path)
-
-    @property
     def __root__(self):
         return self.__parents__[-1]
+
+    def __get_path__(self, *added):
+        return NestedPathProxy(self, added)
+
+    @property
+    def __path__(self):
+        return self.__get_path__()[:]
 
 
 class adopt:
