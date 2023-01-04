@@ -145,10 +145,16 @@ class TaskConfType(ConfType):
 
             try:
                 return template.render_complex(self['exec'])
+            except TypeError:
+                raise ConfTypeError(f'{self.__name__}: "exec" requires string or list of strings '
+                                    f"not: {self['exec']!r}")
             except jinja2.TemplateError as exc:
                 raise ConfValueError(f"{exc.__class__.__name__} @ {self.__path__}.exec: {exc}")
 
         command = self['command'] if 'command' in self else self.__name__
+
+        if not isinstance(command, str):
+            raise ConfTypeError(f'{self.__name__}: "command" requires string not: {command!r}')
 
         return f'{self.__lib__}-{command}'
 
