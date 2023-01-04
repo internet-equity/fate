@@ -2,7 +2,25 @@ import enum
 import functools
 
 
-class StrEnum(str, enum.Enum):
+class MixedEnumMeta(enum.EnumMeta):
+
+    # note: override only necessary prior to Python 3.12
+    def __contains__(cls, obj):
+        if not isinstance(obj, enum.Enum):
+            for member in cls:
+                if obj == member.value:
+                    return True
+            else:
+                return False
+
+        return super().__contains__(obj)
+
+
+class MixedEnum(enum.Enum, metaclass=MixedEnumMeta):
+    pass
+
+
+class StrEnum(str, MixedEnum):
 
     def __str__(self):
         return str(self.value)
