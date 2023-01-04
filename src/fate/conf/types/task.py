@@ -7,6 +7,7 @@ from enum import IntEnum
 
 import croniter
 import jinja2
+from descriptors import classproperty
 
 from fate.util.compat.cpu import cpu_count
 from fate.util.format import Dumper, SLoader
@@ -58,6 +59,20 @@ class TaskConfType(ConfType):
     class _DefaultScheduling(IntEnum):
 
         tenancy = (2 * cpu_count() - 1)
+
+    class _ShellExecutable(StrEnum):
+
+        sh = 'sh'
+        bash = 'bash'
+        python = 'python'
+
+        @classproperty
+        def default(cls):
+            return cls.sh
+
+        @classproperty
+        def options(cls):
+            return [str(member) for member in cls]
 
     class _ScheduleError(StrEnum):
 
@@ -138,11 +153,13 @@ class TaskConfType(ConfType):
     @at_depth(0)
     @property
     def exec_(self):
-        if 'exec' in self:
-            if 'command' in self:
-                raise ConfTypeError("ambiguous configuration: specify either "
-                                    "task 'command' or 'exec' not both")
+        # check for superfluous/conflicting argumentation
+        keys = ('exec', 'shell', 'command')
+        if sum(key in self for key in keys) > 1:
+            raise ConfTypeError(f"{self.__name__}: ambiguous task configuration: "
+                                f"specify 0 or 1 of keys: {keys!r}")
 
+        if 'exec' in self:
             try:
                 return template.render_complex(self['exec'])
             except TypeError:
@@ -150,6 +167,46 @@ class TaskConfType(ConfType):
                                     f"not: {self['exec']!r}")
             except jinja2.TemplateError as exc:
                 raise ConfValueError(f"{exc.__class__.__name__} @ {self.__path__}.exec: {exc}")
+
+        if 'shell' in self:
+            if isinstance(self.shell, collections.abc.Mapping) and 'executable' in self.shell:
+                executable = self.shell.executable
+
+                if not isinstance(executable, str):
+                    raise ConfTypeError(f'{self.__name__}.shell: "executable" expected '
+                                        f'string not: {executable!r}')
+
+                if executable not in self._ShellExecutable:
+                    raise ConfValueError(f'{self.__name__}.shell: "executable" must be '
+                                         f'one of: {tuple(self._ShellExecutable.options)!r}')
+            else:
+                executable = self._ShellExecutable.default
+
+            script = (self.shell.get('script') if isinstance(self.shell, collections.abc.Mapping)
+                      else self.shell)
+
+            if not isinstance(script, str):
+                raise ConfTypeError(
+                    f'{self.__name__}: "shell" expected string input '
+                    f"for '{executable}' command indicated either by a simple string "
+                    f"(for '{self._ShellExecutable.default}') or a mapping of string "
+                    f"input ('script') and optional base command "
+                    f"('executable': {set(self._ShellExecutable.options)!r})"
+                )
+
+            if not script:
+                raise ConfValueError(
+                    f'{self.__name__}: "shell" expected string input '
+                    f"for '{executable}' command indicated either by a simple string "
+                    f"(for '{self._ShellExecutable.default}') or a mapping of string "
+                    f"input ('script') and optional base command "
+                    f"('executable': {set(self._ShellExecutable.options)!r})"
+                )
+
+            try:
+                return (executable, '-c', template.render_str(script))
+            except jinja2.TemplateError as exc:
+                raise ConfValueError(f"{exc.__class__.__name__} @ {self.__path__}.shell: {exc}")
 
         command = self['command'] if 'command' in self else self.__name__
 
