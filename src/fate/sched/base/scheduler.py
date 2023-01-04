@@ -6,6 +6,7 @@ import typing
 
 from descriptors import cachedproperty, classproperty
 
+from fate.conf import ConfBracketError
 from fate.conf.path import SystemPrefix
 from fate.util.iteration import storeresult
 
@@ -44,19 +45,19 @@ class TaskScheduler(Resets):
         count: int
         next: float
 
-    def __init__(self, conf):
+    def __init__(self, conf, logger):
         super().__init__()
         self.conf = conf
+        self.logger = logger.set(sched=self.module_short)
 
     @abc.abstractmethod
-    def exec_tasks(self, log, reset=False):
+    def exec_tasks(self, reset=False):
         yield from ()
         return 0
 
     @storeresult('info')
-    def __call__(self, session_log, reset=False):
-        log = session_log.set(sched=self.module_short)
-        count = yield from self.exec_tasks(log, reset=reset)
+    def __call__(self, reset=False):
+        count = yield from self.exec_tasks(reset=reset)
         return self.SchedInfo(count, self.next_check)
 
     @classproperty
@@ -134,6 +135,17 @@ class TaskScheduler(Resets):
 
         for task in self.conf.task.values():
             if task.scheduled_(last_check, time_check):
+                try:
+                    may_schedule = task.if_
+                except ConfBracketError as exc:
+                    self.logger.warning(task=task.__name__, key=exc.path, msg=str(exc))
+                    may_schedule = exc.evaluation
+
+                if not may_schedule:
+                    self.logger.info(task=task.__name__,
+                                     msg='skipped: suppressed by if/unless condition')
+                    continue
+
                 yield ScheduledTask.schedule(task)
 
     def collect_tasks(self, reset=False):

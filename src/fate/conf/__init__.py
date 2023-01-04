@@ -2,6 +2,7 @@ import functools
 
 from .base import ConfGroup
 from .error import (  # noqa: F401
+    ConfBracketError,
     ConfSyntaxError,
     ConfTypeError,
     ConfValueError,

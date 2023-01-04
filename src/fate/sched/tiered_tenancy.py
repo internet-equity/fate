@@ -45,38 +45,39 @@ class TieredTenancyScheduler(TaskScheduler):
     # For now, let's just wait a "slice":
     poll_frequency = os.sched_rr_get_interval(0)
 
-    def exec_tasks(self, log, reset=False):
+    def exec_tasks(self, reset=False):
         count_completed = 0
 
         tasks_0 = self.collect_tasks(reset=reset)
         queue = SchedulingQueue([tasks_0])
 
-        log.debug(cohort=0, size=queue[0].size, tenancies=queue[0].infomap, msg='enqueued cohort')
+        self.logger.debug(cohort=0, size=queue[0].size, tenancies=queue[0].infomap,
+                          msg='enqueued cohort')
 
         while task_0 := queue.get_task():
 
             pool = TaskProcessPool([task_0], size=1)
 
-            log.debug(active=pool.count, msg='launched pool')
+            self.logger.debug(active=pool.count, msg='launched pool')
 
             while pool.active:
                 min_tenancy = min(get_tenancy(task) for task in pool.iter_tasks())
 
                 if min_tenancy > pool.size:
                     pool.expand(queue.tenancy_tasks(min_tenancy), size=min_tenancy)
-                    log.debug(tenancy=pool.size, active=pool.count, msg='expanded pool')
+                    self.logger.debug(tenancy=pool.size, active=pool.count, msg='expanded pool')
 
                 if time.time() >= self.next_check:
                     tasks_1 = self.collect_tasks(reset=True)
                     queue.append(tasks_1)
 
-                    log.debug(cohort=(len(queue) - 1), size=queue[-1].size,
-                              tenancies=queue[-1].infomap, msg='enqueued cohort')
+                    self.logger.debug(cohort=(len(queue) - 1), size=queue[-1].size,
+                                      tenancies=queue[-1].infomap, msg='enqueued cohort')
 
                     count_fill = pool.fill(queue.tenancy_tasks(pool.size))
 
                     if count_fill:
-                        log.debug(active=pool.count, msg='filled pool')
+                        self.logger.debug(active=pool.count, msg='filled pool')
 
                 time.sleep(self.poll_frequency)
 
@@ -84,7 +85,10 @@ class TieredTenancyScheduler(TaskScheduler):
 
                 if count_ready:
                     count_completed += count_ready
-                    log.debug(completed=count_ready, total=count_completed, active=pool.count)
+
+                    self.logger.debug(completed=count_ready,
+                                      total=count_completed,
+                                      active=pool.count)
 
         return count_completed
 

@@ -202,7 +202,7 @@ class ControlCommand(Main):
         """
         logger = self.logger.set(session=lazy_id())
 
-        completed_tasks = scheduler(self.conf)(logger)
+        completed_tasks = scheduler(self.conf, logger)()
 
         for completed_task in completed_tasks:
             self.finish_task(completed_task, logger)
