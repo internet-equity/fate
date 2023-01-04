@@ -12,12 +12,7 @@ packages = [{include = "fate", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.8"
-#
-# FIXME: See dssg/argcmdr#27
-#
-# argcmdr = "^0.13.1"
-#
-argcmdr = {url = "https://github.com/dssg/argcmdr/archive/0.13.1.zip"}
+argcmdr = "^0.13.2"
 croniter = "^1.3.5"
 Jinja2 = "^3.1.2"
 loguru = "^0.6.0"
