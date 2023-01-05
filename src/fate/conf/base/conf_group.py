@@ -1,6 +1,10 @@
 import typing
 
+from descriptors import cachedproperty
+
 from fate.util.datastructure import NamedTupleEnum, StrEnum
+
+from ..path import PrefixPaths
 
 from ..types import (
     DefaultConf,
@@ -42,6 +46,10 @@ class ConfGroup:
 
         self._link_conf_()
 
+    @cachedproperty
+    def __prefix__(self):
+        return PrefixPaths._infer(self.__lib__)
+
     def _iter_conf_(self, specs):
         for spec in (specs or self._Spec):
             if isinstance(spec, str):
@@ -49,7 +57,16 @@ class ConfGroup:
 
             (conf_name, file_name, types, conf_type) = spec
 
-            yield (conf_name, conf_type(conf_name, self.__lib__, file_name, types))
+            yield (
+                conf_name,
+                conf_type(
+                    conf_name,
+                    self.__lib__,
+                    self.__prefix__,
+                    file_name,
+                    types,
+                )
+            )
 
     def _link_conf_(self):
         for name0 in self.__names__:

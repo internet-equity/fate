@@ -7,7 +7,6 @@ import typing
 from descriptors import cachedproperty, classproperty
 
 from fate.conf import ConfBracketError
-from fate.conf.path import SystemPrefix
 from fate.util.iteration import storeresult
 
 from .scheduled_task import ScheduledTask
@@ -69,7 +68,7 @@ class TaskScheduler(Resets):
     def path_check(self):
         signature = os.pathsep.join(sorted(str(conf.__path__) for conf in self.conf))
         file_hash = hashlib.md5(signature.encode()).hexdigest()
-        return SystemPrefix.state / self.conf.__lib__ / 'check' / file_hash
+        return self.conf.__prefix__.state / 'check' / file_hash
 
     def _check_state_(self, update=False):
         try:
