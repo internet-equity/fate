@@ -29,8 +29,6 @@ from ..error import (
     ResultEncodingError,
 )
 
-from ..path import SystemPrefix
-
 from .base import (
     ConfChain,
     ConfDict,
@@ -268,7 +266,7 @@ class TaskConfType(ConfType):
         return TaskChainMap(
             self.get('path', {}),
             self.__default__.get('path', {}),
-            {'result': SystemPrefix.data / self.__lib__ / 'result'},
+            {'result': self.__prefix__.data / 'result'},
         )
 
     @at_depth(0)
@@ -380,7 +378,7 @@ class TaskConfType(ConfType):
         stamp = dt.timestamp()
         datestr = dt.strftime('%Y%m%dT%H%M%S')
 
-        result_path = (result_spec if isinstance(result_spec, (pathlib.Path, SystemPrefix))
+        result_path = (result_spec if isinstance(result_spec, pathlib.Path)
                        else pathlib.Path(result_spec))
 
         identifier = result_path / f'result-{stamp:.0f}-{datestr}-{self.__parent__.__name__}'

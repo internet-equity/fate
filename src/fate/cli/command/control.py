@@ -14,7 +14,6 @@ from descriptors import cachedproperty
 
 from fate import sched
 from fate.conf import LogsDecodingError, ResultEncodingError
-from fate.conf.path import SystemPrefix
 from fate.util.argument import ChoiceMapping
 from fate.util.lazy import lazy_id
 from fate.util.log import StructLogger
@@ -81,7 +80,7 @@ class ControlCommand(Main):
     @cachedproperty
     def run_path(self):
         """The directory path at which the process stores run-time information."""
-        return SystemPrefix.run / self.conf.__lib__ / f'run-{os.getpid()}'
+        return self.conf.__prefix__.run / f'run-{os.getpid()}'
 
     # Regular expression with which to extract PID from run directory name
     run_path_pattern = re.compile(r'run-(\d+)')

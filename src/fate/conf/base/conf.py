@@ -17,7 +17,6 @@ from ..error import (
     MultiConfError,
     NoConfError,
 )
-from ..path import SystemPrefix
 
 
 class Conf(AttributeAccessMap, NestingConf, LazyLoadProxyMapping):
@@ -30,10 +29,11 @@ class Conf(AttributeAccessMap, NestingConf, LazyLoadProxyMapping):
         dict_ = AttributeDict
         list_ = list
 
-    def __init__(self, name, lib, filename=None, types=None, **others):
+    def __init__(self, name, lib, paths, filename=None, types=None, **others):
         super().__init__()
         self.__name__ = name
         self.__lib__ = lib
+        self.__prefix__ = paths
         self.__filename__ = filename or f"{name}s"
         self.__types__ = types
         self.__other__ = SimpleNamespace(**others)
@@ -52,7 +52,7 @@ class Conf(AttributeAccessMap, NestingConf, LazyLoadProxyMapping):
 
     @cachedproperty
     def _indicator_(self):
-        return SystemPrefix.conf / self.__lib__ / self.__filename__
+        return self.__prefix__.conf / self.__filename__
 
     @cachedproperty
     def __path__(self):
