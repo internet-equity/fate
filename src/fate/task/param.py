@@ -1,27 +1,45 @@
 """Task parameterized input handling."""
+import functools
 import sys
+
+from schema import Schema
 
 from fate.util.datastructure import AttributeDict
 from fate.util.format import SLoader
+from fate.util.compat.types import NoneType
 
 
-def read(*, defaults=None, format='auto', file=sys.stdin):
+Infer = object()
+
+
+def read(*, schema=None, empty=Infer, format='auto', file=sys.stdin):
     """Load (parameterized) input from `file` (defaulting to standard
     input).
 
-    `defaults`, if provided, are returned in lieu of missing input. If
-    `defaults` is a `dict`, then these are merged; otherwise, it's
-    all-or-nothing.
+    `schema`, if provided, is either a `Schema` or a construction
+    argument for `Schema`, and is used to validate input (and to supply
+    defaults).
+
+    `empty` is a default value to treat as the deserialized input if
+    `file` is empty. By default this value is inferred from the provided
+    schema.
 
     Input is deserialized "auto-magically" according to `format`
     (defaulting to `auto`). The input serialization format may be
     specified as one of: `{}`.
 
-    Structured input is returned as an instance of `AttributeDict`.
+    Structured input mappings are returned as instances of
+    `AttributeDict`.
 
     """
-    if isinstance(defaults, dict):
-        defaults = _deep_cast_dict(AttributeDict, defaults)
+    if not isinstance(schema, (NoneType, Schema)):
+        schema = Schema(schema)
+
+    if empty is Infer:
+        if schema and isinstance(schema.schema, (dict, list)):
+            empty = type(schema.schema)()
+        else:
+            empty = None
 
     if stdin := file.read():
         try:
@@ -33,10 +51,13 @@ def read(*, defaults=None, format='auto', file=sys.stdin):
                 raise ValueError(f"unsupported format: {format!r}")
 
             params = loader(stdin, dict_=AttributeDict)
+    else:
+        params = _to_attributedict(empty)
 
-        return params if defaults is None else AttributeDict(defaults, **params)
+    if schema:
+        return _to_attributedict(schema.validate(params))
 
-    return defaults
+    return params
 
 read.__doc__ = read.__doc__.format(SLoader.__names__)
 
@@ -50,3 +71,6 @@ def _deep_cast_dict(cast, target):
         return type(target)(_deep_cast_dict(cast, item) for item in target)
 
     return target
+
+
+_to_attributedict = functools.partial(_deep_cast_dict, AttributeDict)
