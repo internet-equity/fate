@@ -138,14 +138,6 @@ class TaskLogger:
         """
         self.log('CRITICAL', *args, **kwargs)
 
-    def fatal(self, *args, **kwargs):
-        """Write a FATAL record to the configured file.
-
-        See log() for more information.
-
-        """
-        self.log('fatal', *args, **kwargs)
-
     def error(self, *args, **kwargs):
         """Write an ERROR record to the configured file.
 
