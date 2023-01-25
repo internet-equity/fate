@@ -1,4 +1,5 @@
 """In-memory access to supported configuration files."""
+from importlib import resources
 from types import SimpleNamespace
 
 from descriptors import cachedproperty
@@ -29,13 +30,19 @@ class Conf(AttributeAccessMap, NestingConf, LazyLoadProxyMapping):
         dict_ = AttributeDict
         list_ = list
 
-    def __init__(self, name, lib, paths, filename=None, types=None, **others):
+    def __init__(self, name, lib, builtin, paths, filename=None, types=None, **others):
         super().__init__()
+
         self.__name__ = name
         self.__lib__ = lib
-        self.__prefix__ = paths
+
+        self._builtin_ = builtin
+        self._prefix_ = paths
+
         self.__filename__ = filename or f"{name}s"
-        self.__types__ = types
+
+        self._types_ = types
+
         self.__other__ = SimpleNamespace(**others)
 
     def __repr__(self):
@@ -52,7 +59,11 @@ class Conf(AttributeAccessMap, NestingConf, LazyLoadProxyMapping):
 
     @cachedproperty
     def _indicator_(self):
-        return self.__prefix__.conf / self.__filename__
+        return self._prefix_.conf / self.__filename__
+
+    @cachedproperty
+    def _indicator_builtin_(self):
+        return resources.files(self._builtin_.path) / self.__filename__
 
     @cachedproperty
     def __path__(self):
@@ -71,6 +82,14 @@ class Conf(AttributeAccessMap, NestingConf, LazyLoadProxyMapping):
 
             return path
 
+        if self._builtin_.fallback:
+            # fall back to first built-in found
+            for format_ in self._Format:
+                builtin_path = self._indicator_builtin_.with_suffix(format_.suffix)
+
+                if builtin_path.is_file():
+                    return builtin_path
+
         raise NoConfError("%s{%s}" % (
             self._indicator_,
             ','.join(format_.suffix for format_ in self._Format),
@@ -87,7 +106,7 @@ class Conf(AttributeAccessMap, NestingConf, LazyLoadProxyMapping):
     def __getdata__(self):
         types = {
             conf_type.name: (
-                self.__types__ and self.__types__.get(conf_type.name.rstrip('_'))
+                self._types_ and self._types_.get(conf_type.name.rstrip('_'))
             ) or conf_type.value
             for conf_type in self._ConfType
         }

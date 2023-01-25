@@ -17,8 +17,8 @@ class ConfType(DecoratedNestedConf):
         return self.__root__.__lib__
 
     @property
-    def __prefix__(self):
-        return self.__root__.__prefix__
+    def _prefix_(self):
+        return self.__root__._prefix_
 
 
 """Configuration container base classes.

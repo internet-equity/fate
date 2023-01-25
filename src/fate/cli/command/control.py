@@ -80,7 +80,7 @@ class ControlCommand(Main):
     @cachedproperty
     def run_path(self):
         """The directory path at which the process stores run-time information."""
-        return self.conf.__prefix__.run / f'run-{os.getpid()}'
+        return self.conf._prefix_.run / f'run-{os.getpid()}'
 
     # Regular expression with which to extract PID from run directory name
     run_path_pattern = re.compile(r'run-(\d+)')

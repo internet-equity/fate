@@ -266,7 +266,7 @@ class TaskConfType(ConfType):
         return TaskChainMap(
             self.get('path', {}),
             self.__default__.get('path', {}),
-            {'result': self.__prefix__.data / 'result'},
+            {'result': self._prefix_.data / 'result'},
         )
 
     @at_depth(0)

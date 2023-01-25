@@ -68,7 +68,7 @@ class TaskScheduler(Resets):
     def path_check(self):
         signature = os.pathsep.join(sorted(str(conf.__path__) for conf in self.conf))
         file_hash = hashlib.md5(signature.encode()).hexdigest()
-        return self.conf.__prefix__.state / 'check' / file_hash
+        return self.conf._prefix_.state / 'check' / file_hash
 
     def _check_state_(self, update=False):
         try:
