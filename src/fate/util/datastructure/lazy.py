@@ -1,5 +1,7 @@
 import abc
+import functools
 
+from .access import nomap
 from .collection import ProxyMapping
 
 
@@ -58,3 +60,16 @@ class LazyLoadProxyMapping(LazyLoadMap, ProxyMapping):
     """
     def __setdata__(self, data):
         self.__collection__.update(data)
+
+
+class LoadAttributeError(Exception):
+    """Stand-in for `AttributeError`.
+
+    Does *not* extend `AttributeError`, such that descriptors
+    responsible for lazily loading map data may raise it without
+    triggering `__getattr__`.
+
+    """
+
+
+loads = functools.partial(nomap, exc_class=LoadAttributeError)
