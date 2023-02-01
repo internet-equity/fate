@@ -9,7 +9,7 @@ import croniter
 import jinja2
 from descriptors import classproperty
 
-from fate.util.compat.cpu import cpu_count
+from fate.util.compat.os import cpu_count
 from fate.util.format import Dumper, SLoader
 from fate.util.iteration import storeresult
 from fate.util.sentinel import Undefined

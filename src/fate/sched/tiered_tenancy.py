@@ -1,8 +1,9 @@
 import collections
 import itertools
 import operator
-import os
 import time
+
+from fate.util.compat.os import get_interval
 
 from .base import TaskProcessPool, TaskScheduler
 
@@ -43,7 +44,7 @@ class TieredTenancyScheduler(TaskScheduler):
     """
     # Note: optimum time to wait before polling unclear.
     # For now, let's just wait a "slice":
-    poll_frequency = os.sched_rr_get_interval(0)
+    poll_frequency = get_interval()
 
     def exec_tasks(self, reset=False):
         count_completed = 0
