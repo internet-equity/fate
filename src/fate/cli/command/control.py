@@ -7,7 +7,6 @@ import re
 import shutil
 import sys
 import time
-from importlib import resources
 
 import plumbum
 from descriptors import cachedproperty
@@ -15,6 +14,7 @@ from descriptors import cachedproperty
 from fate import sched
 from fate.conf import LogsDecodingError, ResultEncodingError
 from fate.util.argument import ChoiceMapping
+from fate.util.compat import resources
 from fate.util.lazy import lazy_id
 from fate.util.log import StructLogger
 from fate.util.os import pid_exists
