@@ -1,4 +1,5 @@
 import collections
+import functools
 
 from .collection import ProxyDict
 
@@ -24,6 +25,29 @@ class AttributeAccessMap:
             return getter(name)
 
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute {name!r}")
+
+
+def nomap(func, exc_class):
+    """Decorator base to wrap descriptor getter functions such that they
+    *may not* raise `AttributeError`.
+
+    As such, descriptors produced from wrapped functions will never fall
+    back to the class's `__getattr__`.
+
+    This is intended for use with subclasses of `AttributeAccessMap`, to
+    decorate descriptor functions for which falling back to dictionary
+    access -- `__getitem__` -- is problematic, (*e.g.* those involved in
+    dictionary access itself).
+
+    """
+    @functools.wraps(func)
+    def wrapper(self):
+        try:
+            return func(self)
+        except AttributeError as exc:
+            raise exc_class(exc)
+
+    return wrapper
 
 
 class AttributeDict(AttributeAccessMap, dict):

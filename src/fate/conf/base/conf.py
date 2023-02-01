@@ -8,6 +8,7 @@ from fate.util.datastructure import (
     AttributeDict,
     AttributeAccessMap,
     LazyLoadProxyMapping,
+    loads,
     NestingConf,
     SimpleEnum,
 )
@@ -58,14 +59,17 @@ class Conf(AttributeAccessMap, NestingConf, LazyLoadProxyMapping):
                 f"-> {default}>")
 
     @cachedproperty
+    @loads
     def _indicator_(self):
         return self._prefix_.conf / self.__filename__
 
     @cachedproperty
+    @loads
     def _indicator_builtin_(self):
         return resources.files(self._builtin_.path) / self.__filename__
 
     @cachedproperty
+    @loads
     def __path__(self):
         paths = (self._indicator_.with_suffix(format_.suffix)
                  for format_ in self._Format)
@@ -96,10 +100,12 @@ class Conf(AttributeAccessMap, NestingConf, LazyLoadProxyMapping):
         ))
 
     @property
+    @loads
     def _format_(self):
         return self.__path__.suffix[1:]
 
     @property
+    @loads
     def _loader_(self):
         return self._Format[self._format_]
 

@@ -11,6 +11,7 @@ from .collection import (  # noqa: F401
 
 from .lazy import (  # noqa: F401
     LazyLoadProxyMapping,
+    loads,
 )
 
 from .nesting import (  # noqa: F401
