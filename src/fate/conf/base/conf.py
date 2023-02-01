@@ -1,9 +1,9 @@
 """In-memory access to supported configuration files."""
-from importlib import resources
 from types import SimpleNamespace
 
 from descriptors import cachedproperty
 
+from fate.util.compat import resources
 from fate.util.datastructure import (
     AttributeDict,
     AttributeAccessMap,
