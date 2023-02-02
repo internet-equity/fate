@@ -1,116 +1,201 @@
-import os
-import pathlib
-import sys
-import typing
+"""Inference, and environment variable specification, of relevant
+filesystem paths.
 
-from descriptors import classonlymethod
+"""
+import enum
+import functools
+import operator
+import os
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+from descriptors import cachedproperty, classonlymethod, classproperty
 
 from fate.util.compat.path import is_relative_to
 
 
-class PrefixPaths(typing.NamedTuple):
-    """Collection and constructors of relevant filesystem paths."""
+class PrefixProfile(enum.Flag):
 
-    # library configuration
-    conf: pathlib.Path
+    #
+    # system: library was installed under a system (root-writable) path
+    #
+    # (if not set, library was installed under some user path.)
+    #
+    system = enum.auto()
 
-    # results directory (default)
-    data: pathlib.Path
+    #
+    # isolated: library was installed into a python virtual environment
+    #           for the purpose of isolation
+    #
+    # (note: this flag may not be set for some virtual environments,
+    # which seek only to isolate the library's requirements, but not
+    # the tool itself -- e.g., pipx)
+    #
+    isolated = enum.auto()
 
-    # library (retry records) and task state
-    state: pathlib.Path
-
-    # run (lock) files
-    run: pathlib.Path
-
-    @classonlymethod
-    def _make_system(cls):
-        return cls(
-            conf=pathlib.Path('/etc/'),
-            data=pathlib.Path('/var/log/'),
-            state=pathlib.Path('/var/lib/'),
-            run=pathlib.Path('/run/'),
-        )
-
-    @classonlymethod
-    def _make_user(cls):
-        home = pathlib.Path.home()
-
-        return cls(
-            conf=(pathlib.Path(xdg_config)
-                  if (xdg_config := os.getenv('XDG_CONFIG_HOME'))
-                  else home / '.config'),
-            data=(pathlib.Path(xdg_data)
-                  if (xdg_data := os.getenv('XDG_DATA_HOME'))
-                  else home / '.local' / 'share'),
-            state=(pathlib.Path(xdg_state)
-                  if (xdg_state := os.getenv('XDG_STATE_HOME'))
-                  else home / '.local' / 'state'),
-            run=(pathlib.Path(xdg_runtime)
-                 if (xdg_runtime := os.getenv('XDG_RUNTIME_DIR'))
-                 else home / '.local' / 'run'),
-        )
+    @classproperty
+    def empty(cls):
+        return cls(0)
 
     @classonlymethod
-    def _make_venv(cls):
-        return cls(
-            conf=pathlib.Path(sys.prefix),
-            data=pathlib.Path(sys.prefix),
-            state=pathlib.Path(sys.prefix),
-            run=pathlib.Path(sys.prefix),
-        )
+    def infer(cls, lib):
+        """Compose profile flags appropriate to the installation context.
 
-    @classonlymethod
-    def _infer_paths(cls):
-        if sys.prefix == sys.base_prefix:
-            # using system python
+        Inference is overridden by the process environment variable:
 
-            # compat: Python <3.9
-            if is_relative_to(pathlib.Path(__file__), pathlib.Path.home()):
-                # module installed under a user home directory
-                # use XDG_CONFIG_HOME, etc.
-                return cls._make_user()
-            else:
-                # appears global: install global
-                return cls._make_system()
-        else:
-            # looks like a virtualenv
-            # construct path from `sys.prefix`
-            return cls._make_venv()
+            {LIB}_PREFIX_PROFILE={system,isolated,empty}
 
-    @classonlymethod
-    def _infer(cls, lib):
-        """Determine path prefixes appropriate to environment.
+        The value of this variable may be a singular profile name, or a
+        list of these, delimited by either "," (comma) or "|" (pipe).
 
-        Overrides to inference and defaults are retrieved from the
-        process environment variables:
+        The special value `empty` may be specified to indicate the empty
+        flag, (*i.e.*, non-system, non-isolated, or the "user-global"
+        profile).
 
-            {LIB}_PREFIX_PROFILE={system,user,venv}
-
-            {LIB}_PREFIX_{FIELD}=path
+        Note: Any other non-existant profile names specified by the
+        environment variable are ignored.
 
         """
-        environ_profile = os.getenv(f'{lib}_PREFIX_PROFILE'.upper())
+        #
+        # check for profile specified by environment variable
+        #
 
-        if environ_profile == 'system':
-            prefixes = cls._make_system()
-        elif environ_profile == 'user':
-            prefixes = cls._make_user()
-        elif environ_profile == 'venv':
-            prefixes = cls._make_venv()
-        else:
-            prefixes = cls._infer_paths()
+        environ_spec = os.getenv(f'{lib}_PREFIX_PROFILE'.upper(), '')
 
-        # add lib leaf directory to all defaults
-        paths = cls._make(prefix / lib for prefix in prefixes)
+        # environ-given names may be delimited by comma or pipe
+        environ_names = re.findall(r'[^ ,|]+', environ_spec)
 
-        environ_overrides = (
-            (field, os.getenv(f'{lib}_PREFIX_{field}'.upper()))
-            for field in cls._fields
-        )
-        replacements = {
-            field: pathlib.Path(override).absolute()
-            for (field, override) in environ_overrides if override
-        }
+        # unrecognized environ-given names are simply ignored
+        environ_profiles = [cls[name] for name in environ_names if name in cls.__members__]
 
-        return paths._replace(**replacements) if replacements else paths
+        if 'empty' in environ_names:
+            environ_profiles.append(cls.empty)
+
+        if environ_profiles:
+            return functools.reduce(operator.or_, environ_profiles)
+
+        #
+        # infer from installation
+        #
+
+        # compat: Python <3.9
+        user_installation = is_relative_to(Path(__file__), Path.home().parent)
+
+        # module either installed under a user home directory
+        # (and so will use XDG_CONFIG_HOME, etc.)
+        # OR appears global
+        # (and so will install global)
+        location_profile = cls.empty if user_installation else cls.system
+
+        if (
+            # using system python
+            sys.prefix == sys.base_prefix
+
+            # using tox venv: treat as non-isolated
+            or 'pipx' in Path(sys.prefix).parts
+        ):
+            return location_profile
+
+        # looks isolated (a venv)
+        # (and so will construct path from `sys.prefix`)
+        return location_profile | cls.isolated
+
+
+def path(prop):
+    """Wrap a Path-returning method as a cachedproperty and such that:
+
+    * it may be overridden by an environment variable
+
+    * its result (if any) is given a leaf directory named for the
+      PrefixPath.lib attribute
+
+    """
+    @functools.wraps(prop)
+    def wrapped(self):
+        if override := os.getenv(f'{self.lib}_PREFIX_{prop.__name__}'.upper()):
+            return Path(override).absolute()
+
+        prop_path = prop(self)
+
+        return prop_path and prop_path / self.lib
+
+    return cachedproperty(wrapped)
+
+
+@dataclass
+class PrefixPaths:
+    """Path prefixes appropriate to the environment.
+
+    Overrides to inference and defaults are retrieved from the
+    process environment variables:
+
+        {LIB}_PREFIX_PROFILE={system,isolated}
+
+        {LIB}_PREFIX_{FIELD}=path
+
+    """
+    lib: str
+    profile: PrefixProfile
+
+    @classonlymethod
+    def infer(cls, lib):
+        profile = PrefixProfile.infer(lib)
+        return cls(lib, profile)
+
+    @path
+    def conf(self):
+        """library configuration"""
+        if PrefixProfile.system in self.profile:
+            return Path(os.sep) / 'etc'
+
+        if PrefixProfile.isolated in self.profile:
+            return Path(sys.prefix)
+
+        if xdg_config := os.getenv('XDG_CONFIG_HOME'):
+            return Path(xdg_config)
+
+        return Path.home() / '.config'
+
+    @path
+    def data(self):
+        """results directory (default)"""
+        if PrefixProfile.system in self.profile:
+            return Path(os.sep) / 'var' / 'log'
+
+        if PrefixProfile.isolated in self.profile:
+            return Path(sys.prefix)
+
+        if xdg_data := os.getenv('XDG_DATA_HOME'):
+            return Path(xdg_data)
+
+        return Path.home() / '.local' / 'share'
+
+    @path
+    def state(self):
+        """library (retry records) and task state"""
+        if PrefixProfile.system in self.profile:
+            return Path(os.sep) / 'var' / 'lib'
+
+        if PrefixProfile.isolated in self.profile:
+            return Path(sys.prefix)
+
+        if xdg_state := os.getenv('XDG_STATE_HOME'):
+            return Path(xdg_state)
+
+        return Path.home() / '.local' / 'state'
+
+    @path
+    def run(self):
+        """run (lock) files"""
+        if PrefixProfile.system in self.profile:
+            return Path(os.sep) / 'run'
+
+        if PrefixProfile.isolated in self.profile:
+            return Path(sys.prefix)
+
+        if xdg_runtime := os.getenv('XDG_RUNTIME_DIR'):
+            return Path(xdg_runtime)
+
+        return Path.home() / '.local' / 'run'
