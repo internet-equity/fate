@@ -103,8 +103,8 @@ class PrefixProfile(enum.Flag):
         return location_profile | cls.isolated
 
 
-def path(prop):
-    """Wrap a Path-returning method as a cachedproperty and such that:
+def path(method):
+    """Wrap a Path-returning method such that:
 
     * it may be overridden by an environment variable
 
@@ -112,16 +112,28 @@ def path(prop):
       PrefixPath.lib attribute
 
     """
-    @functools.wraps(prop)
-    def wrapped(self):
-        if override := os.getenv(f'{self.lib}_PREFIX_{prop.__name__}'.upper()):
+    @functools.wraps(method)
+    def wrapped(self, *args, **kwargs):
+        if override := os.getenv(f'{self.lib}_PREFIX_{method.__name__}'.upper()):
             return Path(override).absolute()
 
-        prop_path = prop(self)
+        method_path = method(self, *args, **kwargs)
 
-        return prop_path and prop_path / self.lib
+        return method_path and method_path / self.lib
 
-    return cachedproperty(wrapped)
+    return wrapped
+
+
+def path_property(prop):
+    """Wrap a `Path`-returning method as a `path` and as a
+    `cachedproperty`.
+
+    See: `path`.
+
+    """
+    return cachedproperty(path(prop))
+
+path.property = path_property
 
 
 @dataclass
@@ -144,7 +156,7 @@ class PrefixPaths:
         profile = PrefixProfile.infer(lib)
         return cls(lib, profile)
 
-    @path
+    @path.property
     def conf(self):
         """library configuration"""
         if PrefixProfile.system in self.profile:
@@ -158,7 +170,7 @@ class PrefixPaths:
 
         return Path.home() / '.config'
 
-    @path
+    @path.property
     def data(self):
         """results directory (default)"""
         if PrefixProfile.system in self.profile:
@@ -172,7 +184,7 @@ class PrefixPaths:
 
         return Path.home() / '.local' / 'share'
 
-    @path
+    @path.property
     def state(self):
         """library (retry records) and task state"""
         if PrefixProfile.system in self.profile:
@@ -186,7 +198,7 @@ class PrefixPaths:
 
         return Path.home() / '.local' / 'state'
 
-    @path
+    @path.property
     def run(self):
         """run (lock) files"""
         if PrefixProfile.system in self.profile:
@@ -199,3 +211,18 @@ class PrefixPaths:
             return Path(xdg_runtime)
 
         return Path.home() / '.local' / 'run'
+
+    @path
+    def completions(self, shell_name, force_system=None):
+        """shell completion files"""
+        dir_name = 'bash-completion' if shell_name == 'bash' else shell_name
+
+        if force_system or (force_system is None and PrefixProfile.system in self.profile):
+            return Path(os.sep) / 'usr' / 'share' / dir_name / 'completions'
+
+        # completions must ignore user virtual env (and shouldn't matter)
+
+        data_path = (Path(xdg_data) if (xdg_data := os.getenv('XDG_DATA_HOME'))
+                     else Path.home() / '.local' / 'share')
+
+        return data_path / dir_name / 'completions'
