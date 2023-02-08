@@ -207,6 +207,8 @@ class Init(Main):
 
                 if do_install == 'y':
                     try:
+                        completions_path.parent.mkdir(parents=True,
+                                                      exist_ok=True)
                         completions_path.write_text(contents)
                     except OSError:
                         status = EndStatus.failed
