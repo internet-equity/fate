@@ -6,10 +6,11 @@ import fate.cli.command
 from fate.cli.base import Main
 
 
-def extend_parser(parser, conf=None, banner_path=None):
+def extend_parser(parser, conf=None, banner_path=None, entry_points=None):
     parser.set_defaults(
         __conf__=conf,
         __banner_path__=banner_path,
+        __entry_points__=entry_points,
     )
 
 

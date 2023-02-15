@@ -1,4 +1,5 @@
 import enum
+import functools
 
 import fate.conf
 
@@ -32,6 +33,24 @@ class ExitOnError:
             self.parser.exit(78, f'{self.parser.prog}: error: {exc_value}\n')
 
 
+def exit_on_error(method):
+    """Decorator to apply context manager `ExitOnError` to instance
+    methods of classes of type `argcmdr.Command`.
+
+    Note: The decorator wrapper depends upon instance attribute
+    `parser`. As such, affected command classes must extend the default
+    `__init__` (*i.e.* `super()`); or, decorated methods must be invoked
+    *after* command initialization (*i.e.* not as part of its `__init__`).
+
+    """
+    @functools.wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with ExitOnError(self.parser):
+            return method(self, *args, **kwargs)
+
+    return wrapped
+
+
 class CommandInterface:
 
     class CommandStatus(enum.Enum):
@@ -59,7 +78,7 @@ class CommandInterface:
 
     @property
     def conf(self):
-        if not self.__parents__:
+        if (root := self.root) is None:
             # this is the root command
             # retrieve and store conf here
             try:
@@ -70,11 +89,11 @@ class CommandInterface:
             return conf
 
         # defer to root
-        return self.root.conf
+        return root.conf
 
     @property
     def exit_on_error(self):
-        return ExitOnError(self.args.__parser__)
+        return ExitOnError(self.parser)
 
     @staticmethod
     def write_result(path, contents):

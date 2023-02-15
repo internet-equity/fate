@@ -68,31 +68,45 @@ class Conf(AttributeAccessMap, NestingConf, LazyLoadProxyMapping):
     def _indicator_builtin_(self):
         return resources.files(self._builtin_.path) / self.__filename__
 
+    def _iter_builtins_(self):
+        for format_ in self._Format:
+            builtin_path = self._indicator_builtin_.with_suffix(format_.suffix)
+
+            if builtin_path.is_file():
+                yield builtin_path
+
+    def _iter_paths_(self, prefix=None):
+        indicator = prefix / self.__filename__ if prefix else self._indicator_
+
+        for format_ in self._Format:
+            path = indicator.with_suffix(format_.suffix)
+
+            if path.is_file():
+                yield path
+
+    def _get_path_(self, prefix=None):
+        try:
+            (path, *extra) = self._iter_paths_(prefix=prefix)
+        except ValueError:
+            return None
+
+        if extra:
+            raise MultiConfError(path, *extra)
+
+        return path
+
     @cachedproperty
     @loads
     def __path__(self):
-        paths = (self._indicator_.with_suffix(format_.suffix)
-                 for format_ in self._Format)
-
-        extant = [path for path in paths if path.exists()]
-
-        try:
-            (path, *extra) = extant
-        except ValueError:
-            pass
-        else:
-            if extra:
-                raise MultiConfError(*extant)
-
+        if path := self._get_path_():
             return path
 
         if self._builtin_.fallback:
             # fall back to first built-in found
-            for format_ in self._Format:
-                builtin_path = self._indicator_builtin_.with_suffix(format_.suffix)
-
-                if builtin_path.is_file():
-                    return builtin_path
+            try:
+                return next(self._iter_builtins_())
+            except StopIteration:
+                pass
 
         raise NoConfError("%s{%s}" % (
             self._indicator_,

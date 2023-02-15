@@ -80,7 +80,7 @@ class ConfGroup:
 
     @cachedproperty
     def _prefix_(self):
-        return PrefixPaths._infer(self._lib_)
+        return PrefixPaths.infer(self._lib_)
 
     def _iter_conf_(self, specs):
         for spec in (specs or self._Spec):
