@@ -148,9 +148,7 @@ class ControlCommand(Main):
         error_msg = error and f': {error}'
         error_name = exc.__class__.__name__
 
-        parser = self.args.__parser__
-
-        parser.exit(1, f'{parser.prog}: fatal: {error_name}{error_msg}\n')
+        self.parser.exit(1, f'{self.parser.prog}: fatal: {error_name}{error_msg}\n')
 
     def __call__(self, args, parser):
         """Execute the command."""

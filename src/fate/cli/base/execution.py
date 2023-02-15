@@ -133,7 +133,7 @@ class OneOffExecutor(CommandInterface, argcmdr.Local):
     def prepare(self, args, parser):
         """Execute and report on task command execution."""
         try:
-            command_spec = self.call(args, 'get_command')
+            command_spec = self.delegate('get_command')
         except self.local.CommandNotFound as exc:
             hint = ('\nhint: whitespace in program name suggests a misconfiguration'
                     if re.search(r'\s', exc.program) else '')

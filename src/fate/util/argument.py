@@ -23,7 +23,8 @@ class ChoiceMapping(argparse.Action):
 def access_parent(path):
     access_target = path
 
-    while not access_target.exists() and access_target.name != '':
+    # Path.exists() calls stat() which can raise PermissionError (prematurely)
+    while not os.path.exists(access_target) and access_target.name != '':
         access_target = access_target.parent
 
     return access_target
@@ -55,6 +56,12 @@ class PathAccess:
         def ok(self, path):
             return os.access(path, self)
 
+    class PathAccessError(argparse.ArgumentTypeError):
+        """Subclass of ArgumentTypeError raised when path permissions
+        do not match specified mode.
+
+        """
+
     def __init__(self, mode, parents=False):
         if isinstance(mode, str):
             self.access = functools.reduce(operator.or_, (self.Access[part] for part in mode))
@@ -74,35 +81,43 @@ class PathAccess:
         access_target = access_parent(path) if self.parents else path
 
         if not self.access.ok(access_target):
-            raise argparse.ArgumentTypeError("failed to access path with mode "
-                                             f"{self.access.mode}: {path}")
+            raise self.PathAccessError("failed to access path with mode "
+                                       f"{self.access.mode}: {path}")
 
         return path
 
 
+class PathTypeError(argparse.ArgumentTypeError):
+    """Subclass of ArgumentTypeError raised for path of incorrect type."""
+
+
 class FileAccess(PathAccess):
+
+    PathTypeError = PathTypeError
 
     def __call__(self, value):
         path = super().__call__(value)
 
         if self.parents and not path.exists():
             if not access_parent(path).is_dir():
-                raise argparse.ArgumentTypeError(f"path inaccessible: {path}")
+                raise self.PathTypeError(f"path inaccessible: {path}")
         elif not path.is_file():
-            raise argparse.ArgumentTypeError(f"path must be file: {path}")
+            raise self.PathTypeError(f"path must be file: {path}")
 
         return path
 
 
 class DirAccess(PathAccess):
 
+    PathTypeError = PathTypeError
+
     def __call__(self, value):
         path = super().__call__(value)
 
         if self.parents and not path.exists():
             if not access_parent(path).is_dir():
-                raise argparse.ArgumentTypeError(f"path inaccessible: {path}")
+                raise self.PathTypeError(f"path inaccessible: {path}")
         elif not path.is_dir():
-            raise argparse.ArgumentTypeError(f"path must be directory: {path}")
+            raise self.PathTypeError(f"path must be directory: {path}")
 
         return path
