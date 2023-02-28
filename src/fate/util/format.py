@@ -61,11 +61,14 @@ class ConfigurableTomlDecoder(toml.TomlDecoder):
 
 
 class JSONEncoder(json.JSONEncoder):
-    """JSON encoder supporting abstract Mapping objects."""
+    """JSON encoder supporting abstract Sequence and Mapping objects."""
 
     def default(self, obj):
         if isinstance(obj, collections.abc.Mapping):
             return dict(obj)
+
+        if isinstance(obj, collections.abc.Sequence):
+            return tuple(obj)
 
         # let base class raise TypeError
         return super().default(obj)
