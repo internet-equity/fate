@@ -153,7 +153,11 @@ class OneOffExecutor(CommandInterface, argcmdr.Local):
         else:
             (task_name, command) = (None, command_args)
 
-        result = yield command
+        # it's assumed that even if stdin is set to a TTY it's purposeful
+        # here; so, indicate to task.param.read() not to worry about it:
+        bound = command.with_env(FATE_READ_TTY_PARAM='1')
+
+        result = yield bound
 
         if send:
             try:

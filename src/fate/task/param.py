@@ -1,5 +1,6 @@
 """Task parameterized input handling."""
 import functools
+import os
 import sys
 
 from schema import Schema
@@ -41,7 +42,7 @@ def read(*, schema=None, empty=Infer, format='auto', file=sys.stdin):
         else:
             empty = None
 
-    if stdin := file.read():
+    if (not file.isatty() or os.getenv('FATE_READ_TTY_PARAM') == '1') and (stdin := file.read()):
         try:
             (params, _loader) = SLoader.autoload(stdin, format, dict_=AttributeDict)
         except SLoader.NonAutoError:
