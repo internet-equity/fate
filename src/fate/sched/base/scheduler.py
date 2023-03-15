@@ -1,7 +1,6 @@
 import abc
 import hashlib
 import os
-import time
 import typing
 
 from descriptors import cachedproperty, classproperty
@@ -11,6 +10,7 @@ from fate.util.animals import animals
 from fate.util.iteration import storeresult
 
 from .scheduled_task import ScheduledTask
+from .timing import SchedulerTiming
 from .util.reset import resets, Resets
 
 
@@ -30,9 +30,10 @@ class TaskScheduler(Resets):
     ScheduledTask objects.
 
     Invocation of `collect_tasks` records the current timestamp on the
-    file system and under scheduler property `time_check`. The timestamp
-    of the previous "check" (retrieved from the file system) is stored
-    under scheduler property `last_check`.
+    file system and under scheduler property `timing.time_check`. The
+    timestamp of the previous "check" (retrieved from the file system)
+    is stored under scheduler property `timing.last_check`. (See
+    `SchedulerTiming`.)
 
     The Boolean argument `reset` of methods `collect_tasks`, `__call__`,
     (and `reset`), serve to clear the above scheduler properties, such
@@ -44,6 +45,11 @@ class TaskScheduler(Resets):
 
         count: int
         next: float
+
+    @classproperty
+    def module_short(cls):
+        (*_root, name) = cls.__module__.rsplit('.', 1)
+        return name.replace('_', '-')
 
     def __init__(self, conf, logger):
         super().__init__()
@@ -58,12 +64,12 @@ class TaskScheduler(Resets):
     @storeresult('info')
     def __call__(self, reset=False):
         count = yield from self.exec_tasks(reset=reset)
-        return self.SchedInfo(count, self.next_check)
+        return self.SchedInfo(count, self.timing.next_check)
 
-    @classproperty
-    def module_short(cls):
-        (*_root, name) = cls.__module__.rsplit('.', 1)
-        return name.replace('_', '-')
+    @resets
+    @cachedproperty
+    def timing(self):
+        return SchedulerTiming(self.conf, self.logger, self.path_state)
 
     @cachedproperty
     def path_state(self):
@@ -145,69 +151,13 @@ class TaskScheduler(Resets):
 
         return path_state
 
-    @property
-    def path_check(self):
-        """Path to empty file with which time of last check is stored."""
-        return self.path_state / 'check'
-
-    def _check_state_(self, update=False):
-        try:
-            stat_result = os.stat(self.path_check)
-        except FileNotFoundError:
-            last_check = None
-        else:
-            last_check = stat_result.st_mtime
-
-        if update:
-            if not self.path_check.exists():
-                self.path_check.touch()
-
-            os.utime(self.path_check, (self.time_check, self.time_check))
-
-        return last_check
-
-    @resets
-    @cachedproperty
-    def last_check(self):
-        return self._check_state_(update=True)
-
-    @resets
-    @cachedproperty
-    def time_check(self):
-        return time.time()
-
-    @resets
-    @cachedproperty
-    def _next_check_tasks_(self):
-        next_check = None
-
-        for task in self.conf.task.values():
-            next_check = task.schedule_next_(
-                self.time_check,             # t0
-                next_check,                  # t1
-                next_check,                  # default
-                max_years_between_matches=1  # quit if it's that far out
-            )
-
-        return next_check
-
-    next_max = 60 * 60 * 24 * 365  # 1 year in seconds
-
-    @property
-    def _next_check_max_(self):
-        return self.time_check + self.next_max
-
-    @property
-    def next_check(self):
-        return self._next_check_tasks_ or self._next_check_max_
-
     def _iter_tasks_due_(self):
         # bring last_check & time_check local to ensure consistent generation
         # across resets (as unlikely/discouraged as this situation might be).
-        if (last_check := self.last_check) is None:
+        if (last_check := self.timing.last_check) is None:
             return
 
-        time_check = self.time_check
+        time_check = self.timing.time_check
 
         for task in self.conf.task.values():
             if task.scheduled_(last_check, time_check):
