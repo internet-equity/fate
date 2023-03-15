@@ -68,7 +68,7 @@ class TieredTenancyScheduler(TaskScheduler):
                     pool.expand(queue.tenancy_tasks(min_tenancy), size=min_tenancy)
                     self.logger.debug(tenancy=pool.size, active=pool.count, msg='expanded pool')
 
-                if time.time() >= self.next_check:
+                if time.time() >= self.timing.next_check:
                     tasks_1 = self.collect_tasks(reset=True)
                     queue.append(tasks_1)
 
