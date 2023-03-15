@@ -7,6 +7,7 @@ import typing
 from descriptors import cachedproperty, classproperty
 
 from fate.conf import ConfBracketError
+from fate.util.animals import animals
 from fate.util.iteration import storeresult
 
 from .scheduled_task import ScheduledTask
@@ -65,10 +66,89 @@ class TaskScheduler(Resets):
         return name.replace('_', '-')
 
     @cachedproperty
-    def path_check(self):
+    def path_state(self):
+        """Path to persistent state directory dedicated to the set of
+        configuration files of this run.
+
+        The state directory is ensured to be unique for each set of
+        configuration file paths, incorporating an MD5 hash in its base
+        name for this purpose.
+
+        For the sake of user-friendliness, (or debugger-friendliness),
+        a friendly name tag is prepended to this base name, as well.
+
+        For example:
+
+            /var/lib/fate/jellyfish-14a770d5653139e0bb0e39eaf2ec1b67/
+
+        Note that name tags *may* collide; however, full paths should
+        not for state directories initialized for unequal sets of
+        configuration.
+
+        The set of name tags available *are permitted* to change over
+        time -- these are ephemeral aides. Only the hash component of
+        the directory name is used to identify it. Should a state
+        directory's tag component diverge from the library's
+        expectation, it will be renamed appropriately.
+
+        Besides any data written by dependent components, all state
+        directories are initialized to contain the subdirectory `conf/`.
+        This subdirectory is non-functional and for the purpose of
+        debugging. It will contain symbolic links to the configuration
+        files of the runs for which the state directory was created.
+
+        """
+        # compute conf path-based signature and hash
         signature = os.pathsep.join(sorted(str(conf.__path__) for conf in self.conf))
         file_hash = hashlib.md5(signature.encode()).hexdigest()
-        return self.conf._prefix_.state / 'check' / file_hash
+
+        # add in deterministic (but non-unique) friendly name
+        name_index = int(file_hash, 16) % len(animals)
+        name = animals[name_index]
+
+        # and you've got a friendly, unique path!
+        path_state = self.conf._prefix_.state / f"{name}-{file_hash}"
+
+        # check for existing paths with a stale friendly name tag
+        if not path_state.exists():
+            candidates = (
+                (path, path.name.rsplit('-', 1)[-1])
+                for path in self.conf._prefix_.state.iterdir()
+                if path.is_dir()
+            )
+            matches = (path for (path, file_hash1) in candidates if file_hash1 == file_hash)
+
+            try:
+                (collision, *extras) = matches
+            except ValueError:
+                # all good: let's initialize the new one
+                path_conf = path_state / 'conf'
+                path_conf.mkdir(parents=True)
+
+                for conf in self.conf:
+                    link_path = path_conf / conf.__path__.name
+                    link_path.symlink_to(conf.__path__)
+            else:
+                # found one: migrate it
+                self.logger.debug(
+                    stale=str(collision),
+                    msg='migrating stale state directory',
+                )
+                collision.rename(path_state)
+
+                if extras:
+                    # wuh oh found more
+                    self.logger.warning(
+                        stale=[str(path) for path in extras],
+                        msg='ignoring additional stale state directories',
+                    )
+
+        return path_state
+
+    @property
+    def path_check(self):
+        """Path to empty file with which time of last check is stored."""
+        return self.path_state / 'check'
 
     def _check_state_(self, update=False):
         try:
@@ -80,10 +160,7 @@ class TaskScheduler(Resets):
 
         if update:
             if not self.path_check.exists():
-                self.path_check.mkdir(parents=True)
-                for conf in self.conf:
-                    link_path = self.path_check / conf.__path__.name
-                    link_path.symlink_to(conf.__path__)
+                self.path_check.touch()
 
             os.utime(self.path_check, (self.time_check, self.time_check))
 
