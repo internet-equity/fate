@@ -1,7 +1,11 @@
 #
-# TODO: drop this along with Python v3.8
+# Note: drop this along with Python v3.9
 #
-# (importlib_resources needed for e.g. files() found only in Python v3.9)
+# * importlib_resources needed for files() found only in Python v3.9
+#
+# * ...AND for a bug in its initial implementation in 3.9
+#
+# (See: #18)
 #
 import importlib
 import itertools
