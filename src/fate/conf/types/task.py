@@ -54,6 +54,7 @@ class TaskConfType(ConfType):
         param = 'json'
         log = 'auto'
         result = 'auto'
+        state = 'auto'
 
     class _DefaultScheduling(IntEnum):
 

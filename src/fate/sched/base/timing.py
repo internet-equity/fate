@@ -21,12 +21,8 @@ class SchedulerTiming:
     """
     conf: ConfGroup
     logger: StructLogger
-    state_path: Path
-
-    @property
-    def path_check(self):
-        """Path to empty file with which time of last check is stored."""
-        return self.state_path / 'check'
+    path_check: Path        # path to empty file with which time of last
+                            # check is stored               # noqa: E116
 
     @cachedproperty
     def time_check(self):
