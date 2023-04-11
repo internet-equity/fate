@@ -6,6 +6,7 @@ from .access import (  # noqa: F401
 )
 
 from .collection import (  # noqa: F401
+    ProxyDict,
     ProxyList,
 )
 

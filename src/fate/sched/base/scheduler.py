@@ -10,6 +10,7 @@ from fate.util.animals import animals
 from fate.util.iteration import storeresult
 
 from .scheduled_task import ScheduledTask
+from .state import TaskStateManager
 from .timing import SchedulerTiming
 from .util.reset import resets, Resets
 
@@ -69,7 +70,15 @@ class TaskScheduler(Resets):
     @resets
     @cachedproperty
     def timing(self):
-        return SchedulerTiming(self.conf, self.logger, self.path_state)
+        return SchedulerTiming(
+            self.conf,
+            self.logger,
+            self.path_state / 'check',
+        )
+
+    @cachedproperty
+    def state(self):
+        return TaskStateManager(self.path_state / 'state')
 
     @cachedproperty
     def path_state(self):
@@ -172,7 +181,7 @@ class TaskScheduler(Resets):
                                      msg='skipped: suppressed by if/unless condition')
                     continue
 
-                yield ScheduledTask.schedule(task)
+                yield ScheduledTask.schedule(task, state=self.state.bind(task))
 
     def collect_tasks(self, reset=False):
         """Generate ScheduledTasks to be executed.

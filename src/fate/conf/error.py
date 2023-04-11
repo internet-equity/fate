@@ -47,6 +47,14 @@ class ResultEncodingError(ValueError, ConfError):
         self.identifier = identifier
 
 
+class StateEncodingError(ValueError, ConfError):
+
+    def __init__(self, format_, error):
+        super().__init__(format_, error)
+        self.format = format_
+        self.error = error
+
+
 class ConfBracketError(ValueError, ConfError):
 
     message = ('expression SHOULD NOT be enclosed by brackets '
