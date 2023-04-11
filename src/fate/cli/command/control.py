@@ -22,6 +22,13 @@ from fate.util.os import pid_exists
 from .. import Main
 
 
+def snip(text, length=36, ellipsis=' ...'):
+    if len(text) <= length:
+        return text
+
+    return text[:length - len(ellipsis)] + ellipsis
+
+
 class ControlCommand(Main):
     """Base command class for concrete implementations of the task
     controller command.
@@ -248,7 +255,7 @@ class ControlCommand(Main):
         }
 
         if status is self.CommandStatus.Error:
-            logger.error(status_record, stdout=task.stdout, stderr=task.stderr)
+            logger.error(status_record, stdout=snip(task.stdout), stderr=snip(task.stderr))
         else:
             logger.info(status_record)
 
