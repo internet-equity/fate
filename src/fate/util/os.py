@@ -1,8 +1,13 @@
 import errno
 import os
+import sys
+
+from .compat.path import is_relative_to
 
 
-# adapted from psutil
+#
+# pid_exists: adapted from psutil
+#
 
 def pid_exists(pid):
     """Check whether pid exists in the current process table."""
@@ -27,3 +32,21 @@ def pid_exists(pid):
         raise
 
     return True
+
+
+#
+# system_path: see also! fate-pyz:src/__main__.py
+#
+
+def system_path(path):
+    """Whether the given Path `path` appears to be a non-user path.
+
+    Returns bool – or None if called on an unsupported platform
+    (_i.e._ implicitly False).
+
+    """
+    if sys.platform == 'linux':
+        return not is_relative_to(path, '/home') and not is_relative_to(path, '/root')
+
+    if sys.platform == 'darwin':
+        return not is_relative_to(path, '/Users')

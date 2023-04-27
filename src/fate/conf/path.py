@@ -13,7 +13,7 @@ from pathlib import Path
 
 from descriptors import cachedproperty, classonlymethod, classproperty
 
-from fate.util.compat.path import is_relative_to
+from fate.util.os import system_path
 
 
 class PrefixProfile(enum.Flag):
@@ -80,14 +80,11 @@ class PrefixProfile(enum.Flag):
         # infer from installation
         #
 
-        # compat: Python <3.9
-        user_installation = is_relative_to(Path(__file__), Path.home().parent)
-
         # module either installed under a user home directory
         # (and so will use XDG_CONFIG_HOME, etc.)
         # OR appears global
         # (and so will install global)
-        location_profile = cls.empty if user_installation else cls.system
+        location_profile = cls.system if system_path(Path(__file__)) else cls.empty
 
         if (
             # using system python
