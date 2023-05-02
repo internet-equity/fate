@@ -134,19 +134,19 @@ class OneOffExecutor(CommandInterface, argcmdr.Local):
         """Execute and report on task command execution."""
         try:
             command_spec = self.delegate('get_command')
+
+            if command_spec is None:
+                return
+
+            if send := getattr(command_spec, 'send', None):
+                command_args = next(command_spec)
+            else:
+                command_args = command_spec
         except self.local.CommandNotFound as exc:
             hint = ('\nhint: whitespace in program name suggests a misconfiguration'
                     if re.search(r'\s', exc.program) else '')
             parser.exit(127, f'{parser.prog}: error: {exc.program}: '
                              f'command not found on path{hint}\n')
-
-        if command_spec is None:
-            return
-
-        if send := getattr(command_spec, 'send', None):
-            command_args = next(command_spec)
-        else:
-            command_args = command_spec
 
         if isinstance(command_args, (list, tuple)):
             (task_name, command) = command_args
