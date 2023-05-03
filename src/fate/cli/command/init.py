@@ -254,7 +254,7 @@ class Conf(InitCommand):
 
         if prompt.syncd:
             yield EndStatus.complete
-        elif confirmed:
+        elif (args.prompt and confirmed) or (not args.prompt and not prompt.exists):
             try:
                 conf_prefix.mkdir(parents=True, exist_ok=True)
 
