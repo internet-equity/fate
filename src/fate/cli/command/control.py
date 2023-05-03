@@ -15,6 +15,7 @@ from fate import sched
 from fate.conf import LogsDecodingError, ResultEncodingError
 from fate.util.argument import ChoiceMapping
 from fate.util.compat import resources
+from fate.util.compat.path import readlink
 from fate.util.lazy import lazy_id
 from fate.util.log import StructLogger
 from fate.util.os import pid_exists
@@ -341,7 +342,7 @@ class ControlCommand(Main):
                 logger.debug("concurrent run")
                 continue
 
-            conf_paths = {path.readlink() for path in lock_path.iterdir() if path.is_symlink()}
+            conf_paths = {readlink(path) for path in lock_path.iterdir() if path.is_symlink()}
 
             if conf_paths == self.conf_paths:
                 if force:
