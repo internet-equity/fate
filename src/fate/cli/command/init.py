@@ -7,8 +7,10 @@ from pathlib import Path
 
 import argcomplete
 
+from fate.conf.template import render_str
 from fate.util.abstract import abstractmember
 from fate.util.argument import ChoiceMapping, DirAccess, FileAccess
+from fate.util.compat import resources
 from fate.util.compat.argument import BooleanOptionalAction
 from fate.util.datastructure import StrEnum
 from fate.util.format import Loader
@@ -44,13 +46,19 @@ class TaskSymbol(StrEnum):
 
     comp = colors.bold | '↹'
     conf = colors.bold | '⚙'
+    serv = colors.bold | '↬'
 
 
 @dataclass
-class TaskPrompt(abc.ABC):
+class TaskNotice(abc.ABC):
 
     identifier: str
     description: str
+
+
+@dataclass
+class TaskPrompt(TaskNotice):
+
     path: Path
     exists: bool = True
     syncd: bool = True
@@ -68,6 +76,10 @@ class PathUpdate(TaskPrompt):
     update_action = 'update'
 
 
+class NoTask(TaskNotice):
+    pass
+
+
 class InitCommand(Main, metaclass=abc.ABCMeta):
 
     description = abstractmember()
@@ -75,7 +87,7 @@ class InitCommand(Main, metaclass=abc.ABCMeta):
 
     def check_access(self, path):
         try:
-            self.path_access(path)
+            return self.path_access(path)
         except self.path_access.PathTypeError:
             extant_type = 'directory' if isinstance(self.path_access, FileAccess) else 'file'
 
@@ -99,6 +111,14 @@ class InitCommand(Main, metaclass=abc.ABCMeta):
         executor = self.delegate('execute')
 
         prompt = next(executor)
+
+        if isinstance(prompt, NoTask):
+            print(StatusSymbol.failed,
+                  TaskSymbol[prompt.identifier],
+                  prompt.description,
+                  sep='  ')
+
+            return
 
         print(StatusSymbol.complete if prompt.syncd else StatusSymbol.incomplete,
               TaskSymbol[prompt.identifier],
@@ -378,5 +398,118 @@ class Comp(InitCommand):
                 yield EndStatus.failed
             else:
                 yield EndStatus.complete
+        else:
+            yield EndStatus.incomplete
+
+
+@Init.register
+class Serv(InitCommand):
+    """install system service files"""
+
+    identifier = 'serv'
+    description = 'system daemon'
+    path_access = FileAccess('rw', parents=True)
+
+    class Framework(enum.Enum):
+
+        systemd = ('/etc/systemd/system/', '~/.config/systemd/user/')
+
+        @property
+        def primary(self):
+            return Path(self.value[0])
+
+        @property
+        def secondary(self):
+            return Path(self.value[1]).expanduser()
+
+    @staticmethod
+    def get_package(lib, name):
+        return resources.files(f'{lib}.sys.platform.include').joinpath(name)
+
+    def execute(self, args):
+        for framework in self.Framework:
+            if framework.primary.is_dir():
+                # let's try this framework
+                break
+        else:
+            # nothing to do
+            yield NoTask(self.identifier, 'no supported service framework found')
+            return
+
+        # let's see what we have to install for this framework
+        try:
+            package = self.get_package(self.conf._lib_, framework.name)
+        except ModuleNotFoundError:
+            lib = 'fate'
+            package = self.get_package(lib, framework.name)
+        else:
+            lib = self.conf._lib_
+
+        sources = list(package.iterdir())
+
+        name0 = sources[0].name
+
+        try:
+            self.path_access(framework.primary / name0)
+        except self.path_access.PathAccessError:
+            self.check_access(framework.secondary / name0)
+            target_directory = framework.secondary
+        else:
+            target_directory = framework.primary
+
+        install_path = Path(sys.argv[0]).parent
+
+        env_path = os.getenv('PATH', '')
+
+        if install_path not in map(Path, env_path.split(':')):
+            env_path = f'{install_path}:{env_path}'
+
+        updates = [
+            (
+                target_directory / source.name,
+                render_str(source.read_text(),
+                           env_path=env_path,
+                           label=lib.title(),
+                           install_path=install_path),
+            )
+            for source in sources
+        ]
+
+        if len(sources) > 1:
+            descriptor = target_directory / f'{{{name0,...}}}'
+        else:
+            descriptor = target_directory / name0
+
+        prompt = PathUpdate(self.identifier,
+                            f'{framework.name} daemon',
+                            path=descriptor,
+                            exists=False,
+                            syncd=True)
+
+        for (target, contents) in updates:
+            if prompt.syncd:
+                try:
+                    prompt.syncd = contents == target.read_text()
+                except FileNotFoundError:
+                    prompt.syncd = False
+                else:
+                    prompt.exists = True
+            elif not prompt.exists:
+                prompt.exists = target.exists()
+
+            if prompt.exists and not prompt.syncd:
+                break
+
+        confirmed = yield prompt
+
+        if prompt.syncd:
+            yield EndStatus.complete
+        elif (args.prompt and confirmed) or (not args.prompt and not prompt.exists):
+            target_directory.mkdir(parents=True, exist_ok=True)
+
+            for (target, contents) in updates:
+                target.write_text(contents)
+
+            yield EndStatus.complete
         else:
             yield EndStatus.incomplete
