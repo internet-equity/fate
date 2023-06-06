@@ -3,6 +3,7 @@ import functools
 import logging
 import pathlib
 import re
+import uuid
 from datetime import datetime
 from enum import IntEnum
 
@@ -78,6 +79,9 @@ class TaskConfType(ConfType):
 
         missing = "{task_name}: schedule requires cron expression like '* * * * *'"
         bad = missing + " not {schedule!r}"
+        mixed_hash = missing + (" or, with hashed-name jitter, like 'H H(0-2) * * * H' or, "
+                                "with device-unique hashed-name jitter, like 'U U(0-2) * * * U', "
+                                "not {schedule!r}")
 
         def self_format(self, task, schedule=None):
             return self.format(task_name=task.__name__, schedule=schedule)
@@ -98,12 +102,6 @@ class TaskConfType(ConfType):
         return self.__root__.__other__.default
 
     @at_depth(0)
-    @property
-    def _croniter(self):
-        # cover for croniter_range not directly supporting hash_id
-        return functools.partial(croniter.croniter, hash_id=self.__name__)
-
-    @at_depth(0)
     def schedule_iter_(self, t0, t1=None, /, *, max_years_between_matches=None):
         try:
             schedule = self['schedule']
@@ -113,10 +111,26 @@ class TaskConfType(ConfType):
         if not isinstance(schedule, str):
             raise ConfTypeError(self._ScheduleError.bad.self_format(self, schedule))
 
-        runs = (self._croniter(schedule, t0,
-                               max_years_between_matches=max_years_between_matches)
+        if schedule.startswith('@'):
+            hash_unique = False
+        else:
+            (schedule, hash_unique) = re.subn('U', 'H', schedule, flags=re.I)
+
+            if hash_unique and re.search('H', self.schedule, re.I):
+                raise ConfValueError(
+                    self._ScheduleError.mixed_hash.self_format(self, self.schedule)
+                )
+
+        hash_id = self.__name__
+        if hash_unique:
+            hash_id += f'.{uuid.getnode()}'
+
+        # cover for croniter_range not directly supporting hash_id
+        croniter_ = functools.partial(croniter.croniter, hash_id=hash_id)
+
+        runs = (croniter_(schedule, t0, max_years_between_matches=max_years_between_matches)
                 if t1 is None
-                else croniter.croniter_range(t0, t1, schedule, _croniter=self._croniter))
+                else croniter.croniter_range(t0, t1, schedule, _croniter=croniter_))
 
         try:
             yield from runs
