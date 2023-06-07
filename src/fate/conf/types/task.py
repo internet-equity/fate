@@ -102,26 +102,51 @@ class TaskConfType(ConfType):
         return self.__root__.__other__.default
 
     @at_depth(0)
-    def schedule_iter_(self, t0, t1=None, /, *, max_years_between_matches=None):
+    @property
+    @adopt('schedule')
+    def schedule_(self):
         try:
             schedule = self['schedule']
         except KeyError:
             raise ConfTypeError(self._ScheduleError.missing.self_format(self))
 
+        if isinstance(schedule, collections.abc.Mapping):
+            meta = self.__class__(schedule)
+
+            try:
+                schedule = self['schedule']['expression']
+            except KeyError:
+                raise ConfTypeError(self._ScheduleError.missing.self_format(self))
+        else:
+            meta = self.__class__(expression=schedule)
+
         if not isinstance(schedule, str):
             raise ConfTypeError(self._ScheduleError.bad.self_format(self, schedule))
 
-        if schedule.startswith('@'):
-            hash_unique = False
-        else:
-            (schedule, hash_unique) = re.subn('U', 'H', schedule, flags=re.I)
+        hash_id = meta.setdefault('hash', self.__name__)
 
-            if hash_unique and re.search('H', self.schedule, re.I):
+        if not isinstance(hash_id, str):
+            raise ConfTypeError(f'{self.__name__}: schedule.hash requires value of type string '
+                                f'not {hash_id.__class__.__name__}: {hash_id}')
+
+        return meta
+
+    @at_depth(0)
+    def schedule_iter_(self, t0, t1=None, /, *, max_years_between_matches=None):
+        meta = self.schedule_
+
+        if meta.expression.startswith('@'):
+            (schedule, hash_unique) = (meta.expression, False)
+        else:
+            (schedule, hash_unique) = re.subn('U', 'H', meta.expression, flags=re.I)
+
+            if hash_unique and re.search('H', meta.expression, re.I):
                 raise ConfValueError(
-                    self._ScheduleError.mixed_hash.self_format(self, self.schedule)
+                    self._ScheduleError.mixed_hash.self_format(self, meta.expression)
                 )
 
-        hash_id = self.__name__
+        hash_id = meta.hash
+
         if hash_unique:
             hash_id += f'.{uuid.getnode()}'
 
