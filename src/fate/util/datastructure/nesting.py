@@ -11,7 +11,13 @@ class NestingConf:
     position in the collection tree.
 
     """
-    class AbortAdoption(Exception):
+    class AdoptionError(Exception):
+        pass
+
+    class AbortAdoption(AdoptionError):
+        pass
+
+    class ReadoptionError(AdoptionError):
         pass
 
     def __adopt_depth__(self, name, mapping):
@@ -25,20 +31,20 @@ class NestingConf:
 
         if mapping.__depth__ is None:
             mapping.__depth__ = depth1
-        else:
-            assert mapping.__depth__ == depth1
+        elif mapping.__depth__ != depth1:
+            raise self.ReadoptionError
 
     def __adopt_name__(self, name, mapping):
         if mapping.__name__ is Undefined:
             mapping.__name__ = name
-        else:
-            assert mapping.__name__ == name
+        elif mapping.__name__ != name:
+            raise self.ReadoptionError
 
     def __adopt_parent__(self, name, mapping):
         if mapping.__parent__ is None:
             mapping.__parent__ = self
-        else:
-            assert mapping.__parent__ is self
+        elif mapping.__parent__ is not self:
+            raise self.ReadoptionError
 
     def __adopt__(self, name, mapping):
         try:
@@ -52,7 +58,14 @@ class NestingConf:
         value = super().__getitem__(key)
 
         if isinstance(value, NestedConf):
-            self.__adopt__(key, value)
+            try:
+                self.__adopt__(key, value)
+            except self.ReadoptionError:
+                # presumably this is a YAML alias node and correct --
+                # we just need to make a copy for our metadata record
+                value = type(value)(value)
+                self.__adopt__(key, value)
+                self[key] = value
 
         return value
 
