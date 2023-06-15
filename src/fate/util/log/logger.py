@@ -157,12 +157,15 @@ class StructLogger:
         if format is None:
             format = partial(self._sink_format_, target, level)
 
-        self._base_logger.add(
+        return self._base_logger.add(
             target,
             level=level.name,
             format=format,
             **extra
         )
+
+    def _remove_sink(self, sink_id):
+        self._base_logger.remove(sink_id)
 
     def _patched_logger(self):
         return self._base_logger.opt(depth=1).patch(self._patch_record_)
