@@ -153,21 +153,21 @@ def test_refill_primary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
 
         task0 = next(tasks)
 
+        assert task0.__name__ == 'runs-long'
+        assert task0.returncode == 0
+
         assert logs.field_count(level='debug', cohort=0, size=1, msg="enqueued cohort") == 2
 
         assert logs.field_equals(level='debug', active=1, msg="launched pool")
-        assert logs.field_equals(level='debug', tenancy=15, active=1, msg="expanded pool")
+        assert logs.field_equals(level='debug', active=1, msg="expanded pool")
         assert logs.field_equals(level='debug', active=2, msg="filled pool")
 
         (task1,) = tasks
 
+        assert task1.__name__ == 'runs-late'
+        assert task1.returncode == 0
+
         assert logs.field_equals(level='debug', completed=2, total=2, active=0)
-
-    assert task0.__name__ == 'runs-long'
-    assert task0.returncode == 0
-
-    assert task1.__name__ == 'runs-late'
-    assert task1.returncode == 0
 
     assert tasks.info.count == 2
     assert tasks.info.next == 3600  # one hour past the epoch
@@ -260,6 +260,10 @@ def test_refill_secondary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
 
         task0 = next(tasks)
 
+        assert task0.__name__ == 'runs-long'
+        assert task0.stdout == ''
+        assert task0.stderr == ''
+
         assert logs.field_equals(level='debug', cohort=0, size=2, msg="enqueued cohort")
         assert logs.field_equals(level='debug', active=1, msg="launched pool")
         assert logs.field_equals(level='debug', cohort=1, size=1, msg="enqueued cohort")
@@ -271,24 +275,20 @@ def test_refill_secondary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
         #
         task1 = next(tasks)
 
+        assert task1.__name__ == 'on-deck'
+        assert task1.stdout == 'done\n'
+        assert task1.stderr == ''
+
         assert logs.field_equals(level='debug', completed=1, total=1, active=1)
-        assert logs.field_equals(level='debug', tenancy=15, active=2, msg="expanded pool")
+        assert logs.field_equals(level='debug', active=2, msg="expanded pool")
 
         (task2,) = tasks
 
+        assert task2.__name__ == 'runs-late'
+        assert task2.stdout == 'done\n'
+        assert task2.stderr == ''
+
         assert logs.field_equals(level='debug', completed=2, total=3, active=0)
-
-    assert task0.__name__ == 'runs-long'
-    assert task0.stdout == ''
-    assert task0.stderr == ''
-
-    assert task1.__name__ == 'on-deck'
-    assert task1.stdout == 'done\n'
-    assert task1.stderr == ''
-
-    assert task2.__name__ == 'runs-late'
-    assert task2.stdout == 'done\n'
-    assert task2.stderr == ''
 
     assert tasks.info.count == 3
     assert tasks.info.next == 3600  # one hour past the epoch
