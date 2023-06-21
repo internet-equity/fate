@@ -135,8 +135,13 @@ class TaskScheduler(Resets):
 
             try:
                 (collision, *extras) = matches
-            except ValueError:
-                # all good: let's initialize the new one
+            except (FileNotFoundError, ValueError):
+                #
+                # either the base state dir doesn't yet exist
+                # or it does but there are no collisions
+                #
+                # either way all good: let's initialize the new one
+                #
                 path_conf = path_state / 'conf'
                 path_conf.mkdir(parents=True)
 
