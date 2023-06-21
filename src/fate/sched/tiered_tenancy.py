@@ -144,8 +144,18 @@ class TenancyGroup:
 
 
 def enumerate_backwards(seq):
-    indices = range(len(seq) - 1, -1, -1)
-    return zip(indices, reversed(seq))
+    #
+    # note: the point of iterating/enumerating backwards is often to mutate during iteration,
+    # (without affecting the indices of upcoming elements and thereby affecting iteration ...
+    # and of course without just iterating a copy).
+    #
+    # for that reason, cannot reliably use reversed()/__reversed__() -- at least not with
+    # deque() -- as this may be detected as an illegal "mutation during iteration" (see #28).
+    #
+    # (that said, as we are computing indices anyway, this hardly makes a difference.)
+    #
+    for index in range(len(seq) - 1, -1, -1):
+        yield (index, seq[index])
 
 
 class SchedulingCohort:
