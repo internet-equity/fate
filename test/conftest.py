@@ -4,7 +4,7 @@ from .fixture import ConfFixture
 
 
 def conf_fixture(format_, /, monkeypatch, tmp_path):
-    conf_path = tmp_path / 'config'
+    conf_path = tmp_path / 'conf'
     state_path = tmp_path / 'state'
 
     monkeypatch.setenv('FATE_PREFIX_CONF', str(conf_path))

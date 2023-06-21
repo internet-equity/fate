@@ -45,7 +45,7 @@ class LogCapture:
             if partial:
                 return re.compile(rf'\b{key}=[\'"][^\'"]*{value}[^\'"]*[\'"][\b\n]')
 
-            return re.compile(rf'\b{key}=[\'"]{value}[\'"][\b\n]')
+            return re.compile(rf'\b{key}=[\'"]{value}[\'"]\s')
 
         raise TypeError
 
@@ -59,15 +59,22 @@ class LogCapture:
         else:
             return False
 
-    def field_equals(self, **pairs):
+    def field_equals(self, count=None, /, **pairs):
+        found = self.field_count(**pairs)
+
+        return found > 0 if count is None else found == count
+
+    def field_count(self, **pairs):
+        found = 0
+
         for message in self.capture:
             for (key, value) in pairs.items():
                 if not self._field_pattern(key, value).search(message):
                     break
             else:
-                return True
-        else:
-            return False
+                found += 1
+
+        return found
 
     def message_contains(self, text):
         return any(text in message for message in self.capture)

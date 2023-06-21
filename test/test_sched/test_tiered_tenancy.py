@@ -1,3 +1,17 @@
+import time
+from collections import deque
+
+
+class TimeMock:
+
+    def __init__(self, *times, sleep=time.sleep):
+        self.sleep = sleep
+        self._times_ = deque(times)
+
+    def time(self):
+        return self._times_.popleft()
+
+
 def test_due(confpatch, schedpatch):
     #
     # configure a single task which should run
@@ -5,7 +19,7 @@ def test_due(confpatch, schedpatch):
     confpatch.set_tasks(
         {
             'run-me': {
-                'exec': 'echo',
+                'exec': ['echo', 'done'],
                 'schedule': "H/5 * * * *",
             },
         }
@@ -29,6 +43,8 @@ def test_due(confpatch, schedpatch):
 
     (task,) = completed_tasks
     assert task.returncode == 0
+    assert task.stdout == 'done\n'
+    assert task.stderr == ''
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
@@ -42,7 +58,7 @@ def test_skips(confpatch, schedpatch, monkeypatch):
     confpatch.set_tasks(
         {
             'skip-me': {
-                'exec': 'echo',
+                'exec': ['echo', 'done'],
                 'schedule': "H/5 * * * *",
                 'if': 'env.TESTY | default("0") | int == 1',
             },
@@ -66,3 +82,213 @@ def test_skips(confpatch, schedpatch, monkeypatch):
     assert len(completed_tasks) == 0
 
     assert logs.field_equals(msg='skipped: suppressed by if/unless condition')
+
+
+def test_refill_primary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
+    #
+    # configure a long-running task kicked off at minute 0 and another task at minute 1
+    #
+    # if they were both short tasks, this would not exercise a "recheck" / "refill" -- only
+    # because the initial task is still running past the time that the subsequent task is
+    # scheduled, the scheduler performs a recheck which picks up the subsequent task, and with
+    # which it refills its queue.
+    #
+    # because there's no tenancy-related hold-up, the primary cohort (initial check) is
+    # immediately enqueued, and the refill simply recreates this cohort.
+    #
+    # (really the initial task will just wait on the creation of a file ... which will be
+    # created by the subsequent task. as such, the initial task will run only as long as needed
+    # for the test.)
+    #
+    release_dir = tmp_path / 'opt'
+    release_dir.mkdir()
+
+    release_path = release_dir / 'done.d'
+
+    confpatch.set_tasks(
+        {
+            'runs-long': {
+                'exec': [
+                    'inotifywait',
+                    '-qq',
+                    '--event', 'create',
+                    '--timeout', '3',
+                    str(release_dir),
+                ],
+                'schedule': '0 * * * *',
+            },
+            'runs-late': {
+                'exec': ['touch', str(release_path)],
+                'schedule': '1 * * * *',
+            },
+        }
+    )
+
+    #
+    # set up & patch scheduler s.t. initial task will start and
+    # recheck/refill will immediately trigger
+    #
+    schedpatch.set_last_check(-60)  # one minute before the epoch
+
+    monkeypatch.setattr(
+        'fate.sched.base.timing.time',
+        TimeMock(
+            0.001,   # first check time: cron minute is 0
+            60.001,  # second check time (immediately following recheck)
+        )
+    )
+
+    monkeypatch.setattr(
+        'fate.sched.tiered_tenancy.time',
+        TimeMock(
+            60.0,   # recheck: one minute into the epoch: cron minute is 1
+        )
+    )
+
+    #
+    # execute scheduler with captured logs
+    #
+    with confpatch.caplog() as logs:
+        tasks = schedpatch.scheduler()
+
+        task0 = next(tasks)
+
+        assert logs.field_count(level='debug', cohort=0, size=1, msg="enqueued cohort") == 2
+
+        assert logs.field_equals(level='debug', active=1, msg="launched pool")
+        assert logs.field_equals(level='debug', tenancy=15, active=1, msg="expanded pool")
+        assert logs.field_equals(level='debug', active=2, msg="filled pool")
+
+        (task1,) = tasks
+
+        assert logs.field_equals(level='debug', completed=2, total=2, active=0)
+
+    assert task0.__name__ == 'runs-long'
+    assert task0.returncode == 0
+
+    assert task1.__name__ == 'runs-late'
+    assert task1.returncode == 0
+
+    assert tasks.info.count == 2
+    assert tasks.info.next == 3600  # one hour past the epoch
+
+
+def test_refill_secondary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
+    #
+    # configure a long-running single-tenancy task kicked off at minute 0, along with another
+    # task also at minute 0, and another task at minute 1.
+    #
+    # if not for the long-running single-tenancy task, creating a backlog in its minute-zero
+    # cohort, this would not exercise the secondary cohort functionality. only because the long-
+    # running task must run alone, the second task is not executed, and their initial cohort
+    # remains in the queue. the long-running task (eventually) forces a "recheck" / "refill", and
+    # the third task must be added to a second (lower-priority) cohort.
+    #
+    # (really the initial task will just wait on the creation of a file ... which we'll create in
+    # test / with a patch, to fully control the task's timing.)
+    #
+    release_dir = tmp_path / 'opt'
+    release_dir.mkdir()
+
+    release_path = release_dir / 'done.d'
+
+    confpatch.set_tasks(
+        {
+            'runs-long': {
+                'exec': [
+                    'inotifywait',
+                    '-qq',
+                    '--event', 'create',
+                    '--timeout', '3',
+                    str(release_dir),
+                ],
+                'schedule': '0 * * * *',
+                'scheduling': {'tenancy': 1},
+            },
+            'on-deck': {
+                'exec': ['echo', 'done'],
+                'schedule': '0 * * * *',
+            },
+            'runs-late': {
+                'exec': ['echo', 'done'],
+                'schedule': '1 * * * *',
+            },
+        }
+    )
+
+    #
+    # set up & patch scheduler s.t. initial task will start and
+    # recheck/refill will immediately trigger
+    #
+    def patched_sleep(duration):
+        """release task "runs-long" during first sleep"""
+        release_path.touch()
+
+        return time.sleep(duration)
+
+    schedpatch.set_last_check(-60)  # one minute before the epoch
+
+    # scheduler "timing" caches "check time" -- unless reset for a "refill"
+    monkeypatch.setattr(
+        'fate.sched.base.timing.time',
+        TimeMock(
+            0.001,   # first check time: cron minute is 0
+            60.001,  # second check time (immediately following recheck)
+        )
+    )
+
+    # scheduler loop must also check current time
+    #
+    # recheck 0: one minute into the epoch: cron minute is 1
+    # recheck 1: (non-refill): nothing to do
+    # recheck n: (non-refill): nothing to do (number depends on OS scheduler)
+    check_times = (step / 10 for step in range(600, 610))
+
+    monkeypatch.setattr(
+        'fate.sched.tiered_tenancy.time',
+        TimeMock(
+            *check_times,
+            sleep=patched_sleep,
+        )
+    )
+
+    #
+    # execute scheduler with captured logs
+    #
+    with confpatch.caplog() as logs:
+        tasks = schedpatch.scheduler()
+
+        task0 = next(tasks)
+
+        assert logs.field_equals(level='debug', cohort=0, size=2, msg="enqueued cohort")
+        assert logs.field_equals(level='debug', active=1, msg="launched pool")
+        assert logs.field_equals(level='debug', cohort=1, size=1, msg="enqueued cohort")
+
+        #
+        # Issue #28: RuntimeError: "deque mutated during iteration"
+        #
+        # (during subsequent enqueuing of task "runs-late" and clean-up of primary cohort)
+        #
+        task1 = next(tasks)
+
+        assert logs.field_equals(level='debug', completed=1, total=1, active=1)
+        assert logs.field_equals(level='debug', tenancy=15, active=2, msg="expanded pool")
+
+        (task2,) = tasks
+
+        assert logs.field_equals(level='debug', completed=2, total=3, active=0)
+
+    assert task0.__name__ == 'runs-long'
+    assert task0.stdout == ''
+    assert task0.stderr == ''
+
+    assert task1.__name__ == 'on-deck'
+    assert task1.stdout == 'done\n'
+    assert task1.stderr == ''
+
+    assert task2.__name__ == 'runs-late'
+    assert task2.stdout == 'done\n'
+    assert task2.stderr == ''
+
+    assert tasks.info.count == 3
+    assert tasks.info.next == 3600  # one hour past the epoch
