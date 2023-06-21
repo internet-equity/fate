@@ -1,0 +1,38 @@
+name: Test library
+
+on: [push]
+
+jobs:
+  build-test:
+    runs-on: ${{ matrix.operating-system }}
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        operating-system:
+          - ubuntu-latest
+          - macos-latest
+
+        python-version:
+          - "3.8"
+          - "3.9"
+          - "3.10"
+          - "3.11"
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          pip install poetry~=1.4
+          poetry install --only main --only test
+
+      - name: Test library
+        run: poetry run pytest
