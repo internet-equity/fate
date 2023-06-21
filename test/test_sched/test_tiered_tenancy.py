@@ -84,7 +84,7 @@ def test_skips(confpatch, schedpatch, monkeypatch):
     assert logs.field_equals(msg='skipped: suppressed by if/unless condition')
 
 
-def test_refill_primary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
+def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch, tmp_path):
     #
     # configure a long-running task kicked off at minute 0 and another task at minute 1
     #
@@ -96,29 +96,17 @@ def test_refill_primary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
     # because there's no tenancy-related hold-up, the primary cohort (initial check) is
     # immediately enqueued, and the refill simply recreates this cohort.
     #
-    # (really the initial task will just wait on the creation of a file ... which will be
-    # created by the subsequent task. as such, the initial task will run only as long as needed
-    # for the test.)
+    # (really the initial task will just wait on release of a file lock.
+    # as such, the initial task will run only as long as needed for the test.)
     #
-    release_dir = tmp_path / 'opt'
-    release_dir.mkdir()
-
-    release_path = release_dir / 'done.d'
-
     confpatch.set_tasks(
         {
             'runs-long': {
-                'exec': [
-                    'inotifywait',
-                    '-qq',
-                    '--event', 'create',
-                    '--timeout', '3',
-                    str(release_dir),
-                ],
+                **locking_task.conf,
                 'schedule': '0 * * * *',
             },
             'runs-late': {
-                'exec': ['touch', str(release_path)],
+                'exec': ['echo', 'done'],
                 'schedule': '1 * * * *',
             },
         }
@@ -138,10 +126,17 @@ def test_refill_primary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
         )
     )
 
+    # scheduler loop must also check current time
+    #
+    # recheck 0: one minute into the epoch: cron minute is 1
+    # recheck 1: (non-refill): nothing to do
+    # recheck n: (non-refill): nothing to do (number depends on OS scheduler)
+    check_times = (step / 10 for step in range(600, 610))
+
     monkeypatch.setattr(
         'fate.sched.tiered_tenancy.time',
         TimeMock(
-            60.0,   # recheck: one minute into the epoch: cron minute is 1
+            *check_times,
         )
     )
 
@@ -149,31 +144,51 @@ def test_refill_primary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
     # execute scheduler with captured logs
     #
     with confpatch.caplog() as logs:
+        #
+        # task "runs-long" is blocked and we've patched the scheduler loop's time s.t.
+        # a minute will immediately appear to have passed -- therefore the first task
+        # to complete should be "runs-late", enqueued by the re-check.
+        #
         tasks = schedpatch.scheduler()
 
         task0 = next(tasks)
 
-        assert task0.__name__ == 'runs-long'
+        assert task0.__name__ == 'runs-late'
+        assert task0.exception() is None
         assert task0.returncode == 0
+        assert task0.stdout == 'done\n'
+        assert task0.stderr == ''
 
+        #
+        # the primary cohort will have enqueued twice -- for "runs-long" and then
+        # for the refill's "runs-late".
+        #
         assert logs.field_count(level='debug', cohort=0, size=1, msg="enqueued cohort") == 2
 
         assert logs.field_equals(level='debug', active=1, msg="launched pool")
         assert logs.field_equals(level='debug', active=1, msg="expanded pool")
         assert logs.field_equals(level='debug', active=2, msg="filled pool")
 
+        # permit "runs-long" to (finally) complete
+        locking_task.release()
+
+        # exhaust the scheduler of completed tasks
         (task1,) = tasks
 
-        assert task1.__name__ == 'runs-late'
+        assert task1.__name__ == 'runs-long'
+        assert task1.exception() is None
         assert task1.returncode == 0
+        assert task1.stdout == locking_task.result
+        assert task1.stderr == ''
 
-        assert logs.field_equals(level='debug', completed=2, total=2, active=0)
+        assert logs.field_equals(level='debug', completed=1, total=1, active=1)
+        assert logs.field_equals(level='debug', completed=1, total=2, active=0)
 
     assert tasks.info.count == 2
     assert tasks.info.next == 3600  # one hour past the epoch
 
 
-def test_refill_secondary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
+def test_refill_secondary_cohort(locking_task, confpatch, schedpatch, monkeypatch, tmp_path):
     #
     # configure a long-running single-tenancy task kicked off at minute 0, along with another
     # task also at minute 0, and another task at minute 1.
@@ -184,24 +199,13 @@ def test_refill_secondary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
     # remains in the queue. the long-running task (eventually) forces a "recheck" / "refill", and
     # the third task must be added to a second (lower-priority) cohort.
     #
-    # (really the initial task will just wait on the creation of a file ... which we'll create in
-    # test / with a patch, to fully control the task's timing.)
+    # (really the initial task will just wait on release of a file lock ... which we'll control
+    # in test / with a patch, to fully control the task's timing.)
     #
-    release_dir = tmp_path / 'opt'
-    release_dir.mkdir()
-
-    release_path = release_dir / 'done.d'
-
     confpatch.set_tasks(
         {
             'runs-long': {
-                'exec': [
-                    'inotifywait',
-                    '-qq',
-                    '--event', 'create',
-                    '--timeout', '3',
-                    str(release_dir),
-                ],
+                **locking_task.conf,
                 'schedule': '0 * * * *',
                 'scheduling': {'tenancy': 1},
             },
@@ -222,7 +226,8 @@ def test_refill_secondary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
     #
     def patched_sleep(duration):
         """release task "runs-long" during first sleep"""
-        release_path.touch()
+        if locking_task.locked:
+            locking_task.release()
 
         return time.sleep(duration)
 
@@ -261,7 +266,8 @@ def test_refill_secondary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
         task0 = next(tasks)
 
         assert task0.__name__ == 'runs-long'
-        assert task0.stdout == ''
+        assert task0.exception() is None
+        assert task0.stdout == locking_task.result
         assert task0.stderr == ''
 
         assert logs.field_equals(level='debug', cohort=0, size=2, msg="enqueued cohort")
@@ -276,6 +282,7 @@ def test_refill_secondary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
         task1 = next(tasks)
 
         assert task1.__name__ == 'on-deck'
+        assert task1.exception() is None
         assert task1.stdout == 'done\n'
         assert task1.stderr == ''
 
@@ -285,6 +292,7 @@ def test_refill_secondary_cohort(confpatch, schedpatch, monkeypatch, tmp_path):
         (task2,) = tasks
 
         assert task2.__name__ == 'runs-late'
+        assert task2.exception() is None
         assert task2.stdout == 'done\n'
         assert task2.stderr == ''
 
