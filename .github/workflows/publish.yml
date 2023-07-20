@@ -53,6 +53,9 @@ on:
       pypi-test:
         type: boolean
         required: false
+    secrets:
+      PYPI_TOKEN:
+        required: true
 
 env:
   GIT_COMMITTER_NAME: github-actions[bot]
