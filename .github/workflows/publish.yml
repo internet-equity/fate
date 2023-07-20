@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: novel library version and repository tag to apply
+        description: novel library version and repository tag to apply (e.g. 1.0.2-post5)
         required: true
       force-version:
         description: omit check for semantic versioning
