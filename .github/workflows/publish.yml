@@ -240,7 +240,25 @@ jobs:
           # if not test then env var should be sufficient to publish to main pypi
           POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_TOKEN }}
         run: |
+          # build and publish
           poetry publish --build ${{ steps.configure-repo.outputs.publish-repo-flag }}
+
+          # write summary information
+          LIB_SIG="$(poetry version)"
+
+          LIB_NAME="$(echo "$LIB_SIG" | awk '{print $1}')"
+          LIB_VER="$(echo "$LIB_SIG" | awk '{print $2}')"
+
+          if [ "${{ inputs.pypi-test }}" = true ]
+          then
+            PYPI_DOMAIN=test.pypi.org
+          else
+            PYPI_DOMAIN=pypi.org
+          fi
+
+          echo "### Library published :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Build uploaded to https://$PYPI_DOMAIN/project/$LIB_NAME/$LIB_VER/" >> $GITHUB_STEP_SUMMARY
 
       - name: Commit and push
         env:
@@ -251,6 +269,13 @@ jobs:
           git commit --all --message="bump version $lastTag → ${{ inputs.version }}"
 
           git push
+
+          # write summary information
+          echo "### Version bumped :arrow_heading_up:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```console' >> $GITHUB_STEP_SUMMARY
+          git show --format=full --no-patch >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Create tagged release
         run: |
@@ -270,4 +295,11 @@ jobs:
 
           TARGET=$(git show --format=%H --no-patch)
 
-          gh release create "${{ inputs.version }}" --target $TARGET --generate-notes $DRAFT $PRERELEASE
+          URL="$(
+            gh release create "${{ inputs.version }}" --target $TARGET --generate-notes $DRAFT $PRERELEASE
+          )"
+
+          # write summary information
+          echo "### Release created :octocat:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See $URL" >> $GITHUB_STEP_SUMMARY
