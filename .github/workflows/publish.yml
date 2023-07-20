@@ -37,6 +37,7 @@ on:
     inputs:
       version:
         required: true
+        type: string
       force-version:
         type: boolean
         required: false
