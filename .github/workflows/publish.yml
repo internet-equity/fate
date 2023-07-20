@@ -32,6 +32,27 @@ on:
         type: boolean
         required: false
 
+  # these cannot yet be defined in one (unfortunately)
+  workflow_call:
+    inputs:
+      version:
+        required: true
+      force-version:
+        type: boolean
+        required: false
+      force-pass:
+        type: boolean
+        required: false
+      draft:
+        type: boolean
+        required: false
+      prerelease:
+        type: boolean
+        required: false
+      pypi-test:
+        type: boolean
+        required: false
+
 env:
   GIT_COMMITTER_NAME: github-actions[bot]
   GIT_COMMITTER_EMAIL: github-actions[bot]@users.noreply.github.com
