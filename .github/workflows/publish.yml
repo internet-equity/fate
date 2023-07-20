@@ -68,11 +68,13 @@ jobs:
       git-tags: ${{ steps.tags.outputs.git-tags }}
 
     steps:
-      - name: Fail without required secrets
-        if: ${{ ! secrets.PYPI_TOKEN }}
+      - name: Check required secrets
         run: |
-          echo "::error::Secret undefined: PYPI_TOKEN"
-          exit 1
+          if [ -z "${{ secrets.PYPI_TOKEN }}" ]
+          then
+            echo "::error::Secret undefined: PYPI_TOKEN"
+            exit 1
+          fi
 
       - name: Check out repository
         uses: actions/checkout@v3
