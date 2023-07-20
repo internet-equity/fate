@@ -56,6 +56,8 @@ on:
     secrets:
       PYPI_TOKEN:
         required: true
+      TEST_PYPI_TOKEN:
+        required: true
 
 env:
   GIT_COMMITTER_NAME: github-actions[bot]
@@ -72,12 +74,20 @@ jobs:
 
     steps:
       - name: Check required secrets
+        shell: python
         run: |
-          if [ -z "${{ secrets.PYPI_TOKEN }}" ]
-          then
-            echo "::error::Secret undefined: PYPI_TOKEN"
-            exit 1
-          fi
+          secrets = (
+              ('PYPI_TOKEN', '${{ secrets.PYPI_TOKEN }}'),
+              ('TEST_PYPI_TOKEN', '${{ secrets.TEST_PYPI_TOKEN }}'),
+          )
+
+          missing = [name for (name, value) in secrets if not value]
+
+          if missing:
+              for name in missing:
+                  print("::error::Secret undefined:", name)
+
+              raise SystemExit(1)
 
       - name: Check out repository
         uses: actions/checkout@v3
@@ -221,7 +231,7 @@ jobs:
           poetry config repositories.test-pypi "$TEST_PYPI"
 
           # env var apparently insufficient when publishing to non-main repo
-          poetry config pypi-token.test-pypi ${{ secrets.PYPI_TOKEN }}
+          poetry config pypi-token.test-pypi ${{ secrets.TEST_PYPI_TOKEN }}
 
           echo "publish-repo-flag=--repository=test-pypi" >> "$GITHUB_OUTPUT"
 
