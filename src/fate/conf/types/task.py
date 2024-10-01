@@ -276,6 +276,9 @@ class TaskConfType(ConfType):
 
         expression = self[key]
 
+        if isinstance(expression, bool):
+            return not expression if negate else expression
+
         if not isinstance(expression, str):
             raise ConfTypeError(f'{self.__name__}: "{key}" requires expression '
                                 f"string not: {expression!r}")
