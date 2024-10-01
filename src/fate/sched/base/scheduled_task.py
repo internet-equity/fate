@@ -211,7 +211,9 @@ class ScheduledTask(TaskConfDict):
         if self._future_ is None:
             return False
 
-        if ready := self._future_.poll():
+        ready = self._future_.poll()
+
+        if ready and self.returncode is None:
             self.returncode = self._future_.returncode
             self.stdout = self._future_.stdout
             self.stderr = self._future_.stderr
