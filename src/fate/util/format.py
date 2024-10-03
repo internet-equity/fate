@@ -1,7 +1,9 @@
 """Configurable support for serialization formats."""
 import collections
 import csv
+import io
 import json
+import tarfile
 from functools import partial
 
 import toml
@@ -101,6 +103,8 @@ raises = tag('raises')
 
 auto = tag('auto', True)
 
+binary = tag('binary', True)
+
 
 class _NameList:
 
@@ -134,6 +138,13 @@ class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
 
     @CallableEnum.member
     @auto
+    @binary
+    @raises(tarfile.TarError)
+    def tar(binary):
+        return tarfile.open(fileobj=io.BytesIO(binary))
+
+    @CallableEnum.member
+    @auto
     @raises(toml.decoder.TomlDecodeError)
     def toml(text, **types):
         switched = {f'_{name}'.rstrip('_'): value for (name, value) in types.items()}
@@ -155,8 +166,12 @@ class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
     def auto(self):
         return getattr(self.value, 'auto', False)
 
+    @property
+    def binary(self):
+        return getattr(self.value, 'binary', False)
+
     @classmethod
-    def autoload(cls, content, format_, **types):
+    def autoload(cls, content: str | bytes, format_, **types):
         if not format_:
             return (None, None)
 
@@ -164,9 +179,24 @@ class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
             if not content:
                 return (None, None)
 
-            for loader in cls.__auto__:
+            if isinstance(content, str):
+                (binary, text) = (None, content)
+            else:
+                binary = content
+
                 try:
-                    result = loader(content, **types)
+                    text = binary.decode()
+                except UnicodeDecodeError:
+                    text = None
+
+            for loader in cls.__auto__:
+                encoded = binary if loader.binary else text
+
+                if encoded is None:
+                    continue
+
+                try:
+                    result = loader(encoded, **types)
                 except loader.raises:
                     pass
                 else:

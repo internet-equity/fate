@@ -1,5 +1,6 @@
 import enum
 import functools
+import pathlib
 
 import fate.conf
 
@@ -96,7 +97,7 @@ class CommandInterface:
         return ExitOnError(self.parser)
 
     @staticmethod
-    def write_result(path, contents):
+    def write_result(path: pathlib.Path, contents: bytes):
         if path.exists():
             raise FileExistsError(path)
 
@@ -109,5 +110,4 @@ class CommandInterface:
         if not path.parent.is_dir():
             raise NotADirectoryError(20, 'Not a directory', path.parent)
 
-        with path.open('w') as fd:
-            print(contents, end='', file=fd)
+        path.write_bytes(contents)
