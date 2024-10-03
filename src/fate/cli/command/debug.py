@@ -8,24 +8,24 @@ from fate.conf import ResultEncodingError
 from .. import Main, runcmd
 
 
-READABLE = argparse.FileType('r')
+READABLE = argparse.FileType('rb')
 
 
-def path_or_text(value):
+def path_to_bytes(value: str) -> bytes:
     """Guess whether to use given value as-is or to treat as a
     filesystem path (from which to read a value).
 
-    Returns either the given value OR an `open()` file descriptor (via
-    `FileType`).
+    Returns bytes derived either from the given value OR the result of
+    reading a file at that path (via `FileType`).
 
     """
-    if value.startswith('{') or '\n' in value:
-        return value
+    if not value.startswith('{') and '\n' not in value and (
+        value == '-' or os.path.sep in value or os.path.exists(value)
+    ):
+        with READABLE(value) as file:
+            return file.read()
 
-    if value == '-' or os.path.sep in value or os.path.exists(value):
-        return READABLE(value)
-
-    return value
+    return value.encode()
 
 
 @Main.register
@@ -35,27 +35,18 @@ class Debug(argcmdr.Command):
     @runcmd('arguments', metavar='command-arguments', nargs=argparse.REMAINDER,
             help="command arguments (optional)")
     @runcmd('command', help="program to execute")
-    @runcmd('-i', '--stdin', metavar='path|text', type=path_or_text,
+    @runcmd('-i', '--stdin', metavar='path|text', type=path_to_bytes,
             help="set standard input (parameterization) for command to given "
                  "path or text (specify '-' to pass through stdin)")
-    def execute(context, args, parser):
+    def execute(context, args):
         """execute an arbitrary program as an ad-hoc task"""
-        try:
-            cmd = context.local[args.command][args.arguments]
-        except context.local.CommandNotFound:
-            parser.print_usage(sys.stderr)
-            raise
-
-        if hasattr(args.stdin, 'read'):
-            return cmd < args.stdin
-
-        if args.stdin is not None:
-            return cmd << args.stdin
-
-        return cmd
+        return context.Command(
+            [args.command] + args.arguments,
+            stdin=args.stdin or b'',
+        )
 
     @runcmd('task', help="name of configured task to run")
-    @runcmd('-i', '--stdin', metavar='path|text', type=path_or_text,
+    @runcmd('-i', '--stdin', metavar='path|text', type=path_to_bytes,
             help="override standard input (parameterization) for task to given "
                  "path or text (specify '-' to pass through stdin) "
                  "(default: from configuration)")
@@ -67,24 +58,15 @@ class Debug(argcmdr.Command):
         except KeyError:
             parser.error(f"task not found: '{args.task}'")
 
-        if isinstance(exec_ := spec.exec_, str):
-            cmd = context.local[exec_]
-        else:
-            (root, *arguments) = exec_
-            cmd = context.local[root][arguments]
+        result = yield context.Command(
+            args=spec.exec_,
+            name=args.task,
+            stdin=spec.param_.encode() if args.stdin is None else args.stdin,
+        )
 
-        if hasattr(args.stdin, 'read'):
-            bound = cmd < args.stdin
-        elif args.stdin is not None:
-            bound = cmd << args.stdin
-        else:
-            bound = cmd << spec.param_
-
-        (retcode, stdout, stderr) = yield (args.task, bound)
-
-        if args.record and retcode == 0:
+        if args.record and result.returncode == 0:
             try:
-                result_path = spec.path_._result_(stdout)
+                result_path = spec.path_._result_(result.stdout)
             except ResultEncodingError as exc:
                 result_path = exc.identifier
 
@@ -93,7 +75,7 @@ class Debug(argcmdr.Command):
                       file=sys.stderr)
 
             try:
-                context.write_result(result_path, stdout)
+                context.write_result(result_path, result.stdout)
             except NotADirectoryError as exc:
                 print('cannot record result: path or sub-path is not a directory:',
                       exc.filename,

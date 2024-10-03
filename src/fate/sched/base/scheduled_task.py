@@ -1,8 +1,9 @@
 """Execution of scheduled tasks."""
 import os
+import shutil
+import subprocess
 import typing
 
-import plumbum
 from descriptors import cachedproperty, classonlymethod
 
 from fate.conf.error import LogsDecodingError
@@ -11,16 +12,22 @@ from fate.util.datastructure import at_depth, adopt
 
 
 class ImmediateFailure:
-    """Dummy Future for tasks failing to initialize."""
+    """Dummy process for tasks failing to spawn."""
 
     returncode = None
     stdout = None
     stderr = None
 
-    __slots__ = ('exception',)
+    __slots__ = ('message',)
 
-    def __init__(self, exc):
-        self.exception = exc
+    def __init__(self, message):
+        self.message = message
+
+    def __str__(self):
+        return str(self.message)
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}({self.message!r})'
 
     @staticmethod
     def poll():
@@ -89,7 +96,7 @@ class ScheduledTask(TaskConfDict):
 
         self.state = state
 
-        self._future_ = None
+        self._process_ = None
         self.returncode = None
         self.stdout = None
         self.stderr = None
@@ -165,69 +172,85 @@ class ScheduledTask(TaskConfDict):
         Returns the execution-initiated ScheduledTask (self).
 
         """
-        if self._future_ is None:
-            try:
-                if isinstance(exec_ := self.exec_, str):
-                    cmd = plumbum.local[exec_]
-                else:
-                    (root, *arguments) = exec_
-                    cmd = plumbum.local[root][arguments]
-            except plumbum.CommandNotFound as exc:
-                future = ImmediateFailure(exc)
-            else:
-                bound = cmd << self.param_
+        if self._process_ is None:
+            (program, *args) = self.exec_
 
-                state = self.state.read()
+            executable = shutil.which(program)
+
+            if executable is None:
+                process = ImmediateFailure(f'command not found on path: {program}')
+            else:
+                process = subprocess.Popen(
+                    [executable] + args,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    pass_fds=self._pass_fds_,
+                    preexec_fn=self._set_fds_,
+                )
+
+                # write inputs
+                process.stdin.write(self.param_.encode())
+
+                try:
+                    process.stdin.close()
+                except BrokenPipeError:
+                    pass
 
                 with open(self._statein_.input, 'w') as file:
-                    file.write(state)
-
-                future = bound.run_bg(retcode=None,
-                                      pass_fds=self._pass_fds_,
-                                      preexec_fn=self._set_fds_)
+                    file.write(self.state.read())
 
                 # close child's descriptors in parent process
                 for parent_desc in self._state_parent_:
                     os.close(parent_desc)
 
-            self._future_ = future
+            self._process_ = process
 
         return self
 
-    def exception(self):
-        """The in-process exception, raised by Task program
+    def failure(self):
+        """The in-process error, raised by Task program
         initialization, if any.
 
         """
-        return self._future_.exception if isinstance(self._future_, ImmediateFailure) else None
+        return self._process_ if isinstance(self._process_, ImmediateFailure) else None
 
-    def poll(self):
-        """Return whether the Task program's process has exited.
+    def poll(self) -> int | None:
+        """Check whether the Task program has exited and return its exit
+        code.
 
-        Sets the ScheduledTask's `returncode`, `stdout` and `stderr`
-        when the process has exited.
+        Sets the ScheduledTask's `returncode`, `stdout` and `stderr`,
+        and records the task's state output, when the process has indeed
+        terminated.
 
         """
-        if self._future_ is None:
-            return False
+        if self._process_ is None:
+            return None
 
-        ready = self._future_.poll()
+        returncode = self._process_.poll()
 
-        if ready and self.returncode is None:
-            self.returncode = self._future_.returncode
-            self.stdout = self._future_.stdout
-            self.stderr = self._future_.stderr
+        if returncode is not None and self.returncode is None:
+            self.returncode = returncode
+
+            self.stdout = self._process_.stdout.read()
+            self.stderr = self._process_.stderr.read()
 
             # Note: with retry this will also permit 42
-            if self.returncode == 0:
+            if returncode == 0:
                 with open(self._stateout_.output) as file:
                     data = file.read()
 
                 self.state.write(data)
 
-        return ready
+        return returncode
 
-    ready = poll
+    def ready(self) -> bool:
+        """Return whether the Task program's process has terminated.
+
+        See poll().
+
+        """
+        return self.poll() is not None
 
     def logs(self):
         """Parse LogRecords from `stderr`.

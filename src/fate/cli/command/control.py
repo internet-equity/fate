@@ -8,7 +8,6 @@ import shutil
 import sys
 import time
 
-import plumbum
 from descriptors import cachedproperty
 
 from fate import sched
@@ -223,11 +222,9 @@ class ControlCommand(Main):
 
         # Check for in-process exception
 
-        if exc := task.exception():
+        if failure := task.failure():
             # Nothing more to do than to report the error
-            logger.error(f'command not found on path: {exc.program}'
-                         if isinstance(exc, plumbum.CommandNotFound) else str(exc))
-
+            logger.error(str(failure))
             return
 
         # Pass through task's logs (subprocess stderr)
@@ -242,6 +239,11 @@ class ControlCommand(Main):
                            error=str(exc.errors[0]),
                            msg="bad log encoding for configured format: "
                                "record(s) treated as plain text")
+        except UnicodeDecodeError as exc:
+            log_records = ()
+
+            logger.error(error=str(exc),
+                         msg="bad log character encoding: decoding failed")
 
         for log_record in log_records:
             logger.log(*log_record)
@@ -256,9 +258,19 @@ class ControlCommand(Main):
         }
 
         if status is self.CommandStatus.Error:
-            logger.error(status_record, stdout=snip(task.stdout), stderr=snip(task.stderr))
+            status_level = 'error'
+
+            for status_key in ('stdout', 'stderr'):
+                try:
+                    status_data = getattr(task, status_key).decode()
+                except UnicodeDecodeError:
+                    pass
+                else:
+                    status_record[status_key] = snip(status_data)
         else:
-            logger.info(status_record)
+            status_level = 'info'
+
+        logger.log(status_level, status_record)
 
         if status is self.CommandStatus.OK:
             # Write task result (subprocess stdout)

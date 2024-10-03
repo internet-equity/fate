@@ -37,4 +37,14 @@ def render_complex(contents, **context):
     if isinstance(contents, str):
         return render_str(contents, **context)
 
+    raise TypeError("expected str or list not " + contents.__class__.__name__)
+
+
+def render_str_list(contents, **context):
+    if isinstance(contents, list):
+        return [render_str(content, **context) for content in contents]
+
+    if isinstance(contents, str):
+        return [render_str(contents, **context)]
+
     raise TypeError("expected str or list of str not " + contents.__class__.__name__)

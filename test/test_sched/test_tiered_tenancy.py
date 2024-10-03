@@ -1,3 +1,4 @@
+import gzip
 import time
 from collections import deque
 
@@ -46,8 +47,8 @@ def test_due(confpatch, schedpatch):
 
     (task,) = completed_tasks
     assert task.returncode == 0
-    assert task.stdout == 'done\n'
-    assert task.stderr == ''
+    assert task.stdout == b'done\n'
+    assert task.stderr == b''
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
@@ -85,6 +86,47 @@ def test_skips(confpatch, schedpatch, monkeypatch):
     assert len(completed_tasks) == 0
 
     assert logs.field_equals(msg='skipped: suppressed by if/unless condition')
+
+
+def test_binary_result(confpatch, schedpatch):
+    #
+    # configure a binary-producing task
+    #
+    confpatch.set_tasks(
+        {
+            'binary': {
+                'exec': ['gzip', '-c'],
+                'schedule': "H/5 * * * *",
+                'param': 'very special characters\n\n(really)\n',
+            },
+        }
+    )
+
+    #
+    # set up scheduler with a long-previous check s.t. task should execute
+    #
+    schedpatch.set_last_check(offset=3600)
+
+    #
+    # execute scheduler with captured logs
+    #
+    with confpatch.caplog() as logs:
+        completed_tasks = list(schedpatch.scheduler())
+
+    #
+    # task should run and this should be logged
+    #
+    assert len(completed_tasks) == 1
+
+    (task,) = completed_tasks
+
+    assert task.returncode == 0
+
+    assert gzip.decompress(task.stdout) == confpatch.conf.task.binary.param.encode()
+
+    assert task.stderr == b''
+
+    assert logs.field_equals(completed=1, total=1, active=0)
 
 
 def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch, tmp_path):
@@ -157,10 +199,10 @@ def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch,
         task0 = next(tasks)
 
         assert task0.__name__ == 'runs-late'
-        assert task0.exception() is None
+        assert task0.failure() is None
         assert task0.returncode == 0
-        assert task0.stdout == 'done\n'
-        assert task0.stderr == ''
+        assert task0.stdout == b'done\n'
+        assert task0.stderr == b''
 
         #
         # the primary cohort will have enqueued twice -- for "runs-long" and then
@@ -179,10 +221,10 @@ def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch,
         (task1,) = tasks
 
         assert task1.__name__ == 'runs-long'
-        assert task1.exception() is None
+        assert task1.failure() is None
         assert task1.returncode == 0
-        assert task1.stdout == locking_task.result
-        assert task1.stderr == ''
+        assert task1.stdout == locking_task.result.encode()
+        assert task1.stderr == b''
 
         assert logs.field_equals(level='debug', completed=1, total=1, active=1)
         assert logs.field_equals(level='debug', completed=1, total=2, active=0)
@@ -269,9 +311,9 @@ def test_refill_secondary_cohort(locking_task, confpatch, schedpatch, monkeypatc
         task0 = next(tasks)
 
         assert task0.__name__ == 'runs-long'
-        assert task0.exception() is None
-        assert task0.stdout == locking_task.result
-        assert task0.stderr == ''
+        assert task0.failure() is None
+        assert task0.stdout == locking_task.result.encode()
+        assert task0.stderr == b''
 
         assert logs.field_equals(level='debug', cohort=0, size=2, msg="enqueued cohort")
         assert logs.field_equals(level='debug', active=1, msg="launched pool")
@@ -285,9 +327,9 @@ def test_refill_secondary_cohort(locking_task, confpatch, schedpatch, monkeypatc
         task1 = next(tasks)
 
         assert task1.__name__ == 'on-deck'
-        assert task1.exception() is None
-        assert task1.stdout == 'done\n'
-        assert task1.stderr == ''
+        assert task1.failure() is None
+        assert task1.stdout == b'done\n'
+        assert task1.stderr == b''
 
         assert logs.field_equals(level='debug', completed=1, total=1, active=1)
         assert logs.field_equals(level='debug', active=2, msg="expanded pool")
@@ -295,9 +337,9 @@ def test_refill_secondary_cohort(locking_task, confpatch, schedpatch, monkeypatc
         (task2,) = tasks
 
         assert task2.__name__ == 'runs-late'
-        assert task2.exception() is None
-        assert task2.stdout == 'done\n'
-        assert task2.stderr == ''
+        assert task2.failure() is None
+        assert task2.stdout == b'done\n'
+        assert task2.stderr == b''
 
         assert logs.field_equals(level='debug', completed=2, total=3, active=0)
 

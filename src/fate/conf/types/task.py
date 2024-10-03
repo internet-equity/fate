@@ -197,7 +197,7 @@ class TaskConfType(ConfType):
 
     @at_depth(0)
     @property
-    def exec_(self):
+    def exec_(self) -> tuple[str]:
         # check for superfluous/conflicting argumentation
         keys = ('exec', 'shell', 'command')
         if sum(key in self for key in keys) > 1:
@@ -206,7 +206,7 @@ class TaskConfType(ConfType):
 
         if 'exec' in self:
             try:
-                return template.render_complex(self['exec'])
+                return tuple(template.render_str_list(self['exec']))
             except TypeError:
                 raise ConfTypeError(f'{self.__name__}: "exec" requires string or list of strings '
                                     f"not: {self['exec']!r}")
@@ -258,7 +258,7 @@ class TaskConfType(ConfType):
         if not isinstance(command, str):
             raise ConfTypeError(f'{self.__name__}: "command" requires string not: {command!r}')
 
-        return f'{self.__lib__}-{command}'
+        return (f'{self.__lib__}-{command}',)
 
     @at_depth(0)
     @property
@@ -321,7 +321,7 @@ class TaskConfType(ConfType):
 
     @at_depth(0)
     @property
-    def param_(self):
+    def param_(self) -> str:
         param = self.get('param', {})
 
         if isinstance(param, str):
@@ -359,12 +359,12 @@ class TaskConfType(ConfType):
 
     @at_depth(0)
     @storeresult('status')
-    def _iter_logs_(self, stderr):
+    def _iter_logs_(self, stderr: bytes):
         format_ = self.format_['log']
 
         status = self._LogDecodingStatus(format_, [])
 
-        for log_line in stderr.split('\0'):
+        for log_line in stderr.decode().split('\0'):
             if not log_line:
                 continue
 
@@ -409,7 +409,7 @@ class TaskConfType(ConfType):
         return status
 
     @at_depth('*.path')
-    def _result_(self, stdout, dt=None):
+    def _result_(self, stdout: bytes, dt=None):
         result_spec = self.result
 
         if not result_spec:
@@ -436,6 +436,16 @@ class TaskConfType(ConfType):
         try:
             (_struct, loader) = self._Loader.autoload(stdout, format_)
         except self._Loader.NonAutoError:
+            binary = stdout
+
+            try:
+                text = binary.decode()
+            except UnicodeDecodeError as exc:
+                decode_exc = exc
+                text = None
+            else:
+                decode_exc = None
+
             if isinstance(format_, str) or not isinstance(format_, collections.abc.Iterable):
                 formats = (format_,)
             else:
@@ -454,8 +464,14 @@ class TaskConfType(ConfType):
                         )
                     )
 
+                encoded = binary if loader.binary else text
+
+                if encoded is None:
+                    errors.append(decode_exc)
+                    continue
+
                 try:
-                    loader(stdout)
+                    loader(encoded)
                 except loader.raises as exc:
                     errors.append(exc)
                 else:
