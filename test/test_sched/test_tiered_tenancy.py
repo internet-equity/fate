@@ -7,9 +7,12 @@ class TimeMock:
     def __init__(self, *times, sleep=time.sleep):
         self.sleep = sleep
         self._times_ = deque(times)
+        self._past_ = []
 
     def time(self):
-        return self._times_.popleft()
+        time = self._times_.popleft()
+        self._past_.append(time)
+        return time
 
 
 def test_due(confpatch, schedpatch):
@@ -130,9 +133,8 @@ def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch,
     #
     # recheck 0: one minute into the epoch: cron minute is 1
     # recheck 1: (non-refill): nothing to do
-    # recheck n: (non-refill): nothing to do (number depends on OS scheduler)
-    #                          note! this may *sometimes* be a *very* long time!
-    check_times = (step / 10 for step in range(600, 1000))
+    # recheck n: (non-refill): nothing to do (number depends on OS scheduler -- we patch)
+    check_times = (step / 10 for step in range(600, 610))
 
     monkeypatch.setattr(
         'fate.sched.tiered_tenancy.time',
@@ -247,9 +249,8 @@ def test_refill_secondary_cohort(locking_task, confpatch, schedpatch, monkeypatc
     #
     # recheck 0: one minute into the epoch: cron minute is 1
     # recheck 1: (non-refill): nothing to do
-    # recheck n: (non-refill): nothing to do (number depends on OS scheduler)
-    #                          note! this may *sometimes* be a *very* long time!
-    check_times = (step / 10 for step in range(600, 1000))
+    # recheck n: (non-refill): nothing to do (number depends on OS scheduler -- we patch)
+    check_times = (step / 10 for step in range(600, 610))
 
     monkeypatch.setattr(
         'fate.sched.tiered_tenancy.time',
