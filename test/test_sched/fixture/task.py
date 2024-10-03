@@ -23,9 +23,9 @@ class LockingTaskFixture:
                     param = json.load(sys.stdin)
 
                     with open(param['lock_path'], 'w') as fd:
-                        fcntl.flock(fd, fcntl.LOCK_EX)
+                        fcntl.lockf(fd, fcntl.LOCK_EX)
                         print(param['result'], end='')
-                        fcntl.flock(fd, fcntl.LOCK_UN)
+                        fcntl.lockf(fd, fcntl.LOCK_UN)
                     '''
                 ),
             },
@@ -41,10 +41,10 @@ class LockingTaskFixture:
         return self.lock_path.open('w')
 
     def acquire(self):
-        fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.lockf(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         self.locked = True
 
     def release(self):
-        fcntl.flock(self.lock_fd, fcntl.LOCK_UN)
+        fcntl.lockf(self.lock_fd, fcntl.LOCK_UN)
         self.lock_fd.close()
         self.locked = False
