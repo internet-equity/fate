@@ -2,7 +2,7 @@ import multiprocessing
 import os
 
 
-COMPAT_INTERVAL = 0.02
+COMPAT_INTERVAL = 0.01
 
 
 def cpu_count():
@@ -23,4 +23,4 @@ def get_interval(default=COMPAT_INTERVAL):
         # unsupported (e.g. darwin)
         return default
     else:
-        return sched_rr_get_interval(0)
+        return sched_rr_get_interval(0) or default
