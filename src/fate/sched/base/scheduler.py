@@ -9,8 +9,8 @@ from fate.conf import ConfBracketError
 from fate.util.animals import animals
 from fate.util.iteration import storeresult
 
-from .scheduled_task import ScheduledTask
 from .state import TaskStateManager
+from .task import ScheduledTask
 from .timing import SchedulerTiming
 from .util.reset import resets, Resets
 
