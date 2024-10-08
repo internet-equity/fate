@@ -95,7 +95,7 @@ class TaskProcessPool:
         count = 0
 
         for (index, task) in self.enumerate_tasks():
-            if task.ready():
+            if task.ready_():
                 count += 1
 
                 if reservoir:

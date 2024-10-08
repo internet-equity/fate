@@ -222,15 +222,15 @@ class ControlCommand(Main):
 
         # Check for in-process exception
 
-        if failure := task.failure():
+        if isinstance(task, sched.FailedInvocationTask):
             # Nothing more to do than to report the error
-            logger.error(str(failure))
+            logger.error(str(task.error))
             return
 
         # Pass through task's logs (subprocess stderr)
 
         try:
-            log_records = task.logs()
+            log_records = task.logs_()
         except LogsDecodingError as exc:
             log_records = exc.logs
 
@@ -250,17 +250,17 @@ class ControlCommand(Main):
 
         # Check on task subprocess exit status
 
-        status = self.CommandStatus.status(task.returncode)
+        status = self.CommandStatus.status(task.returncode_)
 
         status_record = {
             'status': str(status),
-            'exitcode': task.returncode,
+            'exitcode': task.returncode_,
         }
 
         if status is self.CommandStatus.Error:
             status_level = 'error'
 
-            for status_key in ('stdout', 'stderr'):
+            for status_key in ('stdout_', 'stderr_'):
                 try:
                     status_data = getattr(task, status_key).decode()
                 except UnicodeDecodeError:
@@ -287,7 +287,7 @@ class ControlCommand(Main):
 
             if result_path:
                 try:
-                    self.write_result(result_path, task.stdout)
+                    self.write_result(result_path, task.stdout_)
                 except NotADirectoryError as exc:
                     logger.error(f'cannot record result: '
                                  f'path or sub-path is not a directory: {exc.filename}')
