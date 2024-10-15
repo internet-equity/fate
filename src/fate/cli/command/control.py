@@ -18,6 +18,7 @@ from fate.util.compat.path import readlink
 from fate.util.lazy import lazy_id
 from fate.util.log import StructLogger
 from fate.util.os import pid_exists
+from fate.util.timedelta import human_readable
 
 from .. import Main
 
@@ -250,14 +251,17 @@ class ControlCommand(Main):
 
         # Check on task subprocess exit status
 
-        status = self.CommandStatus.status(task.returncode_)
+        returncode = task.poll_()
+
+        status = self.CommandStatus.assign(returncode, task.stopped_)
 
         status_record = {
             'status': str(status),
-            'exitcode': task.returncode_,
+            'exitcode': returncode,
+            'duration': human_readable(task.duration_()),
         }
 
-        if status is self.CommandStatus.Error:
+        if status.erroneous:
             status_level = 'error'
 
             for status_key in ('stdout_', 'stderr_'):
@@ -266,7 +270,7 @@ class ControlCommand(Main):
                 except UnicodeDecodeError:
                     pass
                 else:
-                    status_record[status_key] = snip(status_data)
+                    status_record[status_key.strip('_')] = snip(status_data)
         else:
             status_level = 'info'
 

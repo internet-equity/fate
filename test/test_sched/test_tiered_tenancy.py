@@ -1,4 +1,5 @@
 import gzip
+import signal
 import time
 from collections import deque
 
@@ -48,7 +49,7 @@ def test_due(confpatch, schedpatch):
     assert len(completed_tasks) == 1
 
     (task,) = completed_tasks
-    assert task.returncode_ == 0
+    assert task.poll_() == 0
     assert task.stdout_ == b'done\n'
     assert task.stderr_ == b''
 
@@ -122,13 +123,95 @@ def test_binary_result(confpatch, schedpatch):
 
     (task,) = completed_tasks
 
-    assert task.returncode_ == 0
+    assert task.poll_() == 0
 
     assert gzip.decompress(task.stdout_) == confpatch.conf.task.binary.param.encode()
 
     assert task.stderr_ == b''
 
     assert logs.field_equals(completed=1, total=1, active=0)
+
+
+def test_timeout_noop(confpatch, schedpatch):
+    #
+    # configure a task with an easy-to-match timeout
+    #
+    confpatch.set_tasks(
+        {
+            'easy-timeout': {
+                'exec': ['echo', 'done'],
+                'schedule': "H/5 * * * *",
+                'timeout': 60,  # seconds
+            },
+        }
+    )
+
+    #
+    # set up scheduler with a long-previous check s.t. task should execute
+    #
+    schedpatch.set_last_check(offset=3600)
+
+    #
+    # execute scheduler with captured logs
+    #
+    with confpatch.caplog() as logs:
+        completed_tasks = list(schedpatch.scheduler())
+
+    #
+    # task should run and this should be logged
+    #
+    assert len(completed_tasks) == 1
+
+    (task,) = completed_tasks
+
+    assert task.poll_() == 0
+
+    assert task.stdout_ == b'done\n'
+
+    assert task.stderr_ == b''
+
+    assert logs.field_equals(completed=1, total=1, active=0)
+
+
+def test_timeout(confpatch, schedpatch):
+    #
+    # configure a task with an impossible timeout
+    #
+    confpatch.set_tasks(
+        {
+            'impossible-timeout': {
+                'shell': 'sleep 5',
+                'schedule': "H/5 * * * *",
+                'timeout': '1s',
+            },
+        }
+    )
+
+    #
+    # set up scheduler with a long-previous check s.t. task should execute
+    #
+    schedpatch.set_last_check(offset=3600)
+
+    #
+    # execute scheduler with captured logs
+    #
+    with confpatch.caplog() as logs:
+        completed_tasks = list(schedpatch.scheduler())
+
+    #
+    # task should run and this should be logged
+    #
+    assert len(completed_tasks) == 1
+
+    (task,) = completed_tasks
+
+    assert task.poll_() == -signal.SIGTERM
+
+    assert task.stdout_ == task.stderr_ == b''
+
+    assert logs.field_equals(completed=1, total=1, active=0)
+
+    assert task.ended_() >= task.expires_()
 
 
 def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch, tmp_path):
@@ -202,7 +285,7 @@ def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch,
 
         assert task0.__name__ == 'runs-late'
         assert isinstance(task0, sched.SpawnedTask)
-        assert task0.returncode_ == 0
+        assert task0.poll_() == 0
         assert task0.stdout_ == b'done\n'
         assert task0.stderr_ == b''
 
@@ -224,7 +307,7 @@ def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch,
 
         assert task1.__name__ == 'runs-long'
         assert isinstance(task1, sched.SpawnedTask)
-        assert task1.returncode_ == 0
+        assert task1.poll_() == 0
         assert task1.stdout_ == locking_task.result.encode()
         assert task1.stderr_ == b''
 

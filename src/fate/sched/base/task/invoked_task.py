@@ -1,8 +1,10 @@
 """Execution of scheduled tasks."""
 import abc
+import datetime
 import os
 import shutil
 import subprocess
+import time
 import typing
 
 from descriptors import cachedproperty, classonlymethod
@@ -156,13 +158,26 @@ class SpawnedTask(BoundTask, InvokedTask):
         super().__init__(data, state)
 
         self._process_ = None
+        self._started_ = None
+        self._ended_ = None
 
-        self.returncode_ = None
+        self.terminated_ = None
+        self.killed_ = None
+
         self.stdout_ = None
         self.stderr_ = None
 
+    @property
+    def stopped_(self) -> float | None:
+        return self.killed_ or self.terminated_
+
     def _spawn_(self):
+        if self._process_ is not None:
+            raise ValueError("task already spawned")
+
         self._process_ = self._popen()
+
+        self._started_ = time.time()
 
     def _popen(self) -> subprocess.Popen:
         (program, *args) = self.exec_
@@ -198,19 +213,62 @@ class SpawnedTask(BoundTask, InvokedTask):
 
         return process
 
-    def _poll_(self) -> int | None:
-        """Check whether the task program has exited and return its exit
-        code.
+    def started_(self) -> float | None:
+        return self._started_
 
-        Sets the SpawnedTask's `returncode`, `stdout` and `stderr`,
+    def ended_(self) -> float | None:
+        if self._ended_ is None:
+            self.poll_()
+
+        return self._ended_
+
+    def duration_(self) -> datetime.timedelta | None:
+        return (ended := self.ended_()) and datetime.timedelta(seconds=ended - self.started_())
+
+    def expires_(self) -> float | None:
+        if (started := self.started_()) is None:
+            return None
+
+        if (timeout := self.timeout_) is None:
+            return None
+
+        return started + timeout.total_seconds()
+
+    def expired_(self) -> bool:
+        expires = self.expires_()
+        return expires is not None and expires <= time.time()
+
+    def _terminate_(self) -> None:
+        self._process_.terminate()
+        self.terminated_ = time.time()
+
+    def _kill_(self) -> None:
+        self._process_.kill()
+        self.killed_ = time.time()
+
+    def poll_(self) -> int | None:
+        """Check whether the task program has exited and return its exit
+        code if any.
+
+        If the task has expired, i.e. run past a configured timeout,
+        this method sends the process the TERM signal; if execution has
+        continued past this, the KILL signal is sent.
+
+        Sets the SpawnedTask's `ended` time, `stdout` and `stderr`,
         and records the task's state output, when the process has indeed
         terminated.
 
         """
+        if self.expired_() and self._process_.poll() is None:
+            if self.terminated_ is None:
+                self._terminate_()
+            else:
+                self._kill_()
+
         returncode = self._process_.poll()
 
-        if returncode is not None and self.returncode_ is None:
-            self.returncode_ = returncode
+        if returncode is not None and self._ended_ is None:
+            self._ended_ = time.time()
 
             self.stdout_ = self._process_.stdout.read()
             self.stderr_ = self._process_.stderr.read()
@@ -227,10 +285,10 @@ class SpawnedTask(BoundTask, InvokedTask):
     def ready_(self) -> bool:
         """Return whether the task program's process has terminated.
 
-        See _poll_().
+        See poll_().
 
         """
-        return self._poll_() is not None
+        return self.poll_() is not None
 
     def logs_(self):
         """Parse LogRecords from `stderr`.
