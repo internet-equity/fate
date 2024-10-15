@@ -4,7 +4,7 @@ import logging
 import pathlib
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import IntEnum
 
 import croniter
@@ -15,6 +15,7 @@ from fate.util.compat.os import cpu_count
 from fate.util.format import Dumper, SLoader
 from fate.util.iteration import storeresult
 from fate.util.sentinel import Undefined
+from fate.util.timedelta import parse_timedelta
 
 from fate.util.datastructure import (
     adopt,
@@ -299,6 +300,34 @@ class TaskConfType(ConfType):
             raise ConfBracketError(path, predicate)
 
         return predicate
+
+    @at_depth(0)
+    @property
+    def timeout_(self) -> timedelta | None:
+        timeout = self.get('timeout', self.__default__.get('timeout'))
+
+        # null, false, '', 0 -> None
+        if not timeout:
+            return None
+
+        if isinstance(timeout, int):
+            # negative, zero -> None
+            if timeout <= 0:
+                return None
+
+            # positive -> timedelta
+            return timedelta(seconds=timeout)
+
+        try:
+            # '1w2d3h4m5s' -> timedelta
+            return parse_timedelta(timeout)
+        except ValueError as exc:
+            raise ConfValueError(f'{self.__name__}: timeout: {exc}')
+        except TypeError:
+            raise ConfTypeError(
+                f"{self.__name__}: timeout expects integer (seconds), timedelta string "
+                f"(e.g. 1w2d3h4m5s), or falsey/null value, not {timeout.__class__.__name__}"
+            )
 
     @at_depth(0)
     @property

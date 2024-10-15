@@ -2,6 +2,8 @@ import enum
 import functools
 import pathlib
 
+from descriptors import classonlymethod
+
 import fate.conf
 
 
@@ -57,22 +59,45 @@ class CommandInterface:
     class CommandStatus(enum.Enum):
         """Status categories of task command return codes."""
 
+        # typical exit codes
+        Retry = 42  # framework-specific
         OK = 0
-        Retry = 42
-        Error = -1  # any other
 
-        @classmethod
-        def status(cls, code):
+        # termination by signal
+        Killed = -9
+        Terminated = -15
+
+        # meta-statuses for erroneous exits
+        Unrecognized = -997
+        Timeout = -998
+        Error = -999
+
+        @classonlymethod
+        def select(cls, code):
             """Retrieve appropriate status for given return code."""
             value = int(code)
 
             try:
                 return cls(value)
             except ValueError:
-                if value > 0:
-                    return cls.Error
+                return cls.Error if value > 0 else cls.Unrecognized
 
-                raise
+        @classonlymethod
+        def assign(cls, code, stopped=False):
+            """Retrieve appropriate status given return code and whether
+            a Timeout stop was issued.
+
+            """
+            status = cls.select(code)
+            return cls.Timeout if stopped and status.stoppage else status
+
+        @property
+        def erroneous(self) -> bool:
+            return self.value < 0
+
+        @property
+        def stoppage(self) -> bool:
+            return -100 < self.value < 0
 
         def __str__(self):
             return self.name
