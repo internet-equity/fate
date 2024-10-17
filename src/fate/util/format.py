@@ -1,9 +1,13 @@
 """Configurable support for serialization formats."""
+import bz2
 import collections
 import csv
+import gzip
 import io
 import json
+import lzma
 import tarfile
+import typing
 from functools import partial
 
 import toml
@@ -120,6 +124,27 @@ class _Raises:
         return getattr(self.value, 'raises', ())
 
 
+class Decoder(typing.NamedTuple):
+
+    loader: collections.abc.Callable[[str | bytes], typing.Any]
+    binary: bool
+    raises: tuple[Exception]
+    suffix: str
+
+    def __call__(self, value: str | bytes, *args, **kwargs):
+        return self.loader(value, *args, **kwargs)
+
+
+class Decoding(typing.NamedTuple):
+
+    decoded: typing.Any
+    decoder: Decoder
+
+
+def taropen(binary: bytes) -> tarfile.TarFile:
+    return tarfile.open(fileobj=io.BytesIO(binary))
+
+
 class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
 
     @CallableEnum.member
@@ -136,12 +161,25 @@ class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
 
         return json.loads(text, object_hook=dict_)
 
-    @CallableEnum.member
+    @CallableEnum.membermethod
     @auto
     @binary
     @raises(tarfile.TarError)
-    def tar(binary):
-        return tarfile.open(fileobj=io.BytesIO(binary))
+    def tar(self, binary):
+        archive = taropen(binary)
+
+        if isinstance(archive.fileobj, gzip.GzipFile):
+            suffix = '.tar.gz'
+        elif isinstance(archive.fileobj, bz2.BZ2File):
+            suffix = '.tar.bz2'
+        elif isinstance(archive.fileobj, lzma.LZMAFile):
+            suffix = '.tar.xz'
+        else:
+            suffix = self.suffix
+
+        decoder = self.decoder._replace(loader=taropen, suffix=suffix)
+
+        return self.Decoding(archive, decoder)
 
     @CallableEnum.member
     @auto
@@ -159,6 +197,10 @@ class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
         return {} if conf is None else conf
 
     @classproperty
+    def __deserializers__(cls):
+        return [member.name for member in cls if not member.binary]
+
+    @classproperty
     def __auto__(cls):
         return [member for member in cls if member.auto]
 
@@ -169,6 +211,11 @@ class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
     @property
     def binary(self):
         return getattr(self.value, 'binary', False)
+
+    @property
+    def decoder(self):
+        return self.Decoder(loader=self, binary=self.binary,
+                            raises=self.raises, suffix=self.suffix)
 
     @classmethod
     def autoload(cls, content: str | bytes, format_, **types):
@@ -196,10 +243,15 @@ class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
                     continue
 
                 try:
-                    result = loader(encoded, **types)
+                    decoding = loader(encoded, **types)
                 except loader.raises:
                     pass
                 else:
+                    if isinstance(decoding, cls.Decoding):
+                        (result, loader) = decoding
+                    else:
+                        result = decoding
+
                     # yaml.load treats a string literal as a valid document;
                     # however, this is probably not what's wanted.
                     if not isinstance(result, str):
@@ -213,7 +265,10 @@ class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
 class NonAutoError(ValueError):
     pass
 
+
 SLoader.NonAutoError = NonAutoError
+SLoader.Decoding = Decoding
+SLoader.Decoder = Decoder
 
 
 class Loader(_Raises, FileFormatEnum, CallableEnum):

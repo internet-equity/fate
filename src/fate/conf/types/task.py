@@ -87,8 +87,11 @@ class TaskConfType(ConfType):
         def self_format(self, task, schedule=None):
             return self.format(task_name=task.__name__, schedule=schedule)
 
-    _serializer_error = ('{conf_path}: unsupported serialization format: {format_!r} '
-                         f"(select from: {_Loader.__names__})")
+    _deserializer_error = ('{conf_path}: unsupported serialization format: {format_!r} '
+                           f"(select from: {_Loader.__deserializers__})")
+
+    _result_format_error = ('{conf_path}: unsupported result format: {format_!r} '
+                            f"(select from: {_Loader.__names__})")
 
     def __repr__(self):
         repr_ = super().__repr__()
@@ -409,8 +412,11 @@ class TaskConfType(ConfType):
                 try:
                     loader = self._Loader[format_]
                 except KeyError:
+                    loader = None
+
+                if loader is None or loader.binary:
                     raise ConfValueError(
-                        self._serializer_error.format(
+                        self._deserializer_error.format(
                             conf_path=f'{self.__name__}.format.log',
                             format_=format_,
                         )
@@ -487,7 +493,7 @@ class TaskConfType(ConfType):
                     loader = self._Loader[format1]
                 except KeyError:
                     raise ConfValueError(
-                        self._serializer_error.format(
+                        self._result_format_error.format(
                             conf_path=f'{self.__parent__.__name__}.format.result',
                             format_=format1,
                         )
@@ -500,10 +506,13 @@ class TaskConfType(ConfType):
                     continue
 
                 try:
-                    loader(encoded)
+                    decoding = loader(encoded)
                 except loader.raises as exc:
                     errors.append(exc)
                 else:
+                    if isinstance(decoding, self._Loader.Decoding):
+                        loader = decoding.decoder
+
                     break
             else:
                 raise ResultEncodingError(format_, errors, identifier)
