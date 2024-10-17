@@ -261,7 +261,9 @@ def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch,
     # recheck 0: one minute into the epoch: cron minute is 1
     # recheck 1: (non-refill): nothing to do
     # recheck n: (non-refill): nothing to do (number depends on OS scheduler -- we patch)
-    check_times = (step / 10 for step in range(600, 610))
+    #
+    # assuming 1ms pauses we'll advance the clock 2ms each time:
+    check_times = (step / 1_000 for step in range(60_000, 65_000, 2))
 
     monkeypatch.setattr(
         'fate.sched.tiered_tenancy.time',
@@ -377,7 +379,7 @@ def test_refill_secondary_cohort(locking_task, confpatch, schedpatch, monkeypatc
     # recheck 0: one minute into the epoch: cron minute is 1
     # recheck 1: (non-refill): nothing to do
     # recheck n: (non-refill): nothing to do (number depends on OS scheduler -- we patch)
-    check_times = (step / 10 for step in range(600, 610))
+    check_times = (step / 1_000 for step in range(60_000, 65_000, 2))
 
     monkeypatch.setattr(
         'fate.sched.tiered_tenancy.time',

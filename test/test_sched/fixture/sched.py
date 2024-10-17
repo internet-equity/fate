@@ -10,7 +10,7 @@ class SchedulerFixture:
         self.scheduler = sched.TieredTenancyScheduler(conf, logger)
 
         # ensure that -- regardless of OS -- scheduler polls consistently for patching
-        self.scheduler.poll_frequency = 0.01
+        self.scheduler.poll_frequency = 0.001
 
     def set_last_check(self, last_check=None, *, offset=None):
         if (
