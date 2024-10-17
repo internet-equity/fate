@@ -2,7 +2,7 @@ import multiprocessing
 import os
 
 
-COMPAT_INTERVAL = 0.01
+COMPAT_INTERVAL = 0.001
 
 
 def cpu_count():
