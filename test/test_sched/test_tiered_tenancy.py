@@ -1,9 +1,16 @@
 import gzip
+import os
+import re
 import signal
+import textwrap
 import time
 from collections import deque
 
+import pytest
+
 from fate import sched
+
+from test.fixture import StopWatch
 
 
 class TimeMock:
@@ -50,8 +57,8 @@ def test_due(confpatch, schedpatch):
 
     (task,) = completed_tasks
     assert task.poll_() == 0
-    assert task.stdout_ == b'done\n'
-    assert task.stderr_ == b''
+    assert str(task.stdout_) == 'done\n'
+    assert str(task.stderr_) == ''
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
@@ -125,11 +132,60 @@ def test_binary_result(confpatch, schedpatch):
 
     assert task.poll_() == 0
 
-    assert gzip.decompress(task.stdout_) == confpatch.conf.task.binary.param.encode()
+    assert gzip.decompress(bytes(task.stdout_)) == confpatch.conf.task.binary.param.encode()
 
-    assert task.stderr_ == b''
+    assert bytes(task.stderr_) == b''
 
     assert logs.field_equals(completed=1, total=1, active=0)
+
+
+def test_large_result(confpatch, schedpatch):
+    #
+    # configure a task producing significant output
+    #
+    HUNDRED_MB = 100 * 1024 ** 2
+
+    confpatch.set_tasks(
+        {
+            'big': {
+                'shell': f'head -c {HUNDRED_MB} </dev/zero',
+                'schedule': "H/5 * * * *",
+            },
+        }
+    )
+
+    #
+    # set up scheduler with a long-previous check s.t. task should execute
+    #
+    schedpatch.set_last_check(offset=3600)
+
+    #
+    # execute scheduler with captured logs
+    #
+    with (
+        confpatch.caplog() as logs,
+        StopWatch() as session
+    ):
+        completed_tasks = list(schedpatch.scheduler())
+
+    #
+    # task should run and this should be logged
+    #
+    assert len(completed_tasks) == 1
+
+    (task,) = completed_tasks
+
+    assert task.poll_() == 0
+
+    assert str(task.stderr_) == ''
+
+    assert logs.field_equals(completed=1, total=1, active=0)
+
+    assert task.duration_().total_seconds() < 1
+
+    assert session.seconds < 1
+
+    assert len(bytes(task.stdout_)) == HUNDRED_MB
 
 
 def test_timeout_noop(confpatch, schedpatch):
@@ -166,21 +222,34 @@ def test_timeout_noop(confpatch, schedpatch):
 
     assert task.poll_() == 0
 
-    assert task.stdout_ == b'done\n'
+    assert bytes(task.stdout_) == b'done\n'
 
-    assert task.stderr_ == b''
+    assert bytes(task.stderr_) == b''
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
 
-def test_timeout(confpatch, schedpatch):
+def test_timeout_child(confpatch, schedpatch):
     #
-    # configure a task with an impossible timeout
+    # configure a task with an impossible timeout created by a well-behaving child process
     #
     confpatch.set_tasks(
         {
             'impossible-timeout': {
-                'shell': 'sleep 5',
+                # bash *may* feature a "sleep" built-in so we can pause the child in-process
+                # but, this is not reliable -- so, we'll use python
+                'shell': {
+                    'executable': 'python',
+                    'script': textwrap.dedent('''\
+                        import os, time
+
+                        print('started:', os.getpid(), os.getpgid(0), flush=True)
+
+                        time.sleep(10)
+
+                        print('finished')
+                    '''),
+                },
                 'schedule': "H/5 * * * *",
                 'timeout': '1s',
             },
@@ -195,7 +264,10 @@ def test_timeout(confpatch, schedpatch):
     #
     # execute scheduler with captured logs
     #
-    with confpatch.caplog() as logs:
+    with (
+        confpatch.caplog() as logs,
+        StopWatch() as session
+    ):
         completed_tasks = list(schedpatch.scheduler())
 
     #
@@ -207,11 +279,288 @@ def test_timeout(confpatch, schedpatch):
 
     assert task.poll_() == -signal.SIGTERM
 
-    assert task.stdout_ == task.stderr_ == b''
+    assert str(task.stderr_) == ''
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
     assert task.ended_() >= task.expires_()
+
+    assert 1 <= task.duration_().total_seconds() < 2
+
+    assert 1 <= session.seconds < 2
+
+    # we shouldn't see "finished"
+    stdout_match = re.fullmatch(
+        r'started: (?P<cpid>\d+) +(?P<cpgid>\d+)\n',
+        str(task.stdout_)
+    )
+
+    assert stdout_match, str(task.stdout_)
+
+    (cpid, cpgid) = (int(group) for group in (stdout_match['cpid'],
+                                              stdout_match['cpgid']))
+
+    assert cpid == cpgid == task._process_.pid
+
+    # nothing should remain in process group
+    with pytest.raises(ProcessLookupError):
+        os.killpg(cpgid, 0)
+
+
+def test_timeout_child_trap(confpatch, schedpatch):
+    #
+    # configure a task with an impossible timeout created by a misbehaving child process
+    #
+    confpatch.set_tasks(
+        {
+            'impossible-timeout': {
+                # bash *may* feature a "sleep" built-in so we can pause the child in-process
+                # but, this is not reliable -- so, we'll use python
+                'shell': {
+                    'executable': 'python',
+                    'script': textwrap.dedent('''\
+                        import os, signal, time
+
+                        print('started:', os.getpid(), os.getpgid(0), flush=True)
+
+                        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+                        time.sleep(10)
+
+                        print('finished')
+                    '''),
+                },
+                'schedule': "H/5 * * * *",
+                'timeout': '1s',
+            },
+        }
+    )
+
+    #
+    # set up scheduler with a long-previous check s.t. task should execute
+    #
+    schedpatch.set_last_check(offset=3600)
+
+    #
+    # execute scheduler with captured logs
+    #
+    with (
+        confpatch.caplog() as logs,
+        StopWatch() as session
+    ):
+        completed_tasks = list(schedpatch.scheduler())
+
+    #
+    # task should run and this should be logged
+    #
+    assert len(completed_tasks) == 1
+
+    (task,) = completed_tasks
+
+    assert task.poll_() == -signal.SIGKILL
+
+    assert str(task.stderr_) == ''
+
+    assert logs.field_equals(completed=1, total=1, active=0)
+
+    assert task.ended_() >= task.expires_()
+
+    assert 1 <= task.duration_().total_seconds() < 2
+
+    assert 1 <= session.seconds < 2
+
+    # we shouldn't see "finished"
+    stdout_match = re.fullmatch(
+        r'started: (?P<cpid>\d+) +(?P<cpgid>\d+)\n',
+        str(task.stdout_)
+    )
+
+    assert stdout_match, str(task.stdout_)
+
+    (cpid, cpgid) = (int(group) for group in (stdout_match['cpid'],
+                                              stdout_match['cpgid']))
+
+    assert cpid == cpgid == task._process_.pid
+
+    # nothing should remain in process group
+    with pytest.raises(ProcessLookupError):
+        os.killpg(cpgid, 0)
+
+
+def test_timeout_grandchild(confpatch, schedpatch):
+    #
+    # configure a task with an impossible timeout created by a well-behaving --
+    # but file descriptor-inheriting -- grandchild process.
+    #
+    confpatch.set_tasks(
+        {
+            'impossible-timeout': {
+                'shell': '''\
+                    pgid="$(ps -o pgid= -p $$)"
+                    echo "started: $$ $pgid"
+
+                    sh -c '
+                        pgid="$(ps -o pgid= -p $$)"
+                        echo "grandchild: $$ $pgid"
+                        sleep 10
+                    '
+
+                    echo finished
+                ''',
+                'schedule': "H/5 * * * *",
+                'timeout': '1s',
+            },
+        }
+    )
+
+    #
+    # set up scheduler with a long-previous check s.t. task should execute
+    #
+    schedpatch.set_last_check(offset=3600)
+
+    #
+    # execute scheduler with captured logs
+    #
+    with (
+        confpatch.caplog() as logs,
+        StopWatch() as session
+    ):
+        completed_tasks = list(schedpatch.scheduler())
+
+    #
+    # task should run and this should be logged
+    #
+    assert len(completed_tasks) == 1
+
+    (task,) = completed_tasks
+
+    assert task.poll_() == -signal.SIGTERM
+
+    assert str(task.stderr_) == ''
+
+    assert logs.field_equals(completed=1, total=1, active=0)
+
+    assert task.ended_() >= task.expires_()
+
+    assert 1 <= task.duration_().total_seconds() < 2
+
+    assert 1 <= session.seconds < 2
+
+    # we shouldn't see "finished"
+    stdout_match = re.fullmatch(
+        r'started: (?P<cpid>\d+) +(?P<cpgid>\d+)\n'
+        r'grandchild: (?P<gpid>\d+) +(?P<gpgid>\d+)\n',
+        str(task.stdout_)
+    )
+
+    assert stdout_match, str(task.stdout_)
+
+    (cpid, cpgid, gpid, gpgid) = (int(group) for group in (stdout_match['cpid'],
+                                                           stdout_match['cpgid'],
+                                                           stdout_match['gpid'],
+                                                           stdout_match['gpgid']))
+
+    assert cpid == task._process_.pid
+
+    assert gpid != task._process_.pid
+
+    assert cpid == cpgid == gpgid
+
+    # grandchild was stopped as well
+    with pytest.raises(ProcessLookupError):
+        os.kill(gpid, 0)
+
+    # nothing should remain in process group
+    with pytest.raises(ProcessLookupError):
+        os.killpg(cpgid, 0)
+
+
+def test_timeout_grandchild_trap(confpatch, schedpatch):
+    #
+    # configure a task with an impossible timeout created by a misbehaving --
+    # and file descriptor-inheriting -- grandchild process.
+    #
+    confpatch.set_tasks(
+        {
+            'impossible-timeout': {
+                # we want to configure how the sleeping subprocess operates,
+                # so we'll use python again, but also force it into its own
+                # subprocess via "shell" (like: sh -c 'python -c ...')
+                'shell': {
+                    'executable': 'bash',
+                    'script': textwrap.dedent('''\
+                        python <<<"
+                        import os, signal, time
+
+                        print('started:', os.getpid(), os.getpgid(0), flush=True)
+
+                        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+                        time.sleep(10)
+
+                        print('finished')
+                        "
+                    '''),
+                },
+                'schedule': "H/5 * * * *",
+                'timeout': '1s',
+            },
+        }
+    )
+
+    #
+    # set up scheduler with a long-previous check s.t. task should execute
+    #
+    schedpatch.set_last_check(offset=3600)
+
+    #
+    # execute scheduler with captured logs
+    #
+    with (
+        confpatch.caplog() as logs,
+        StopWatch() as session
+    ):
+        completed_tasks = list(schedpatch.scheduler())
+
+    #
+    # task should run and this should be logged
+    #
+    assert len(completed_tasks) == 1
+
+    (task,) = completed_tasks
+
+    assert task.poll_() == -signal.SIGTERM
+
+    assert str(task.stderr_) == ''
+
+    assert logs.field_equals(completed=1, total=1, active=0)
+
+    assert task.ended_() >= task.expires_()
+
+    assert 1 <= task.duration_().total_seconds() < 2
+
+    assert 1 <= session.seconds < 2
+
+    # we shouldn't see "finished"
+    stdout_match = re.fullmatch(
+        r'started: (?P<gpid>\d+) +(?P<gpgid>\d+)\n',
+        str(task.stdout_)
+    )
+
+    assert stdout_match, str(task.stdout_)
+
+    (gpid, gpgid) = (int(group) for group in (stdout_match['gpid'],
+                                              stdout_match['gpgid']))
+
+    assert gpid != task._process_.pid
+
+    assert gpgid == task._process_.pid
+
+    # grandchild was *not* stopped (but we continued nonetheless)
+    os.kill(gpid, 0)  # this check-in won't raise an exception
+
+    # grandchild remains in process group
+    os.killpg(gpgid, 0)
 
 
 def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch, tmp_path):
@@ -288,8 +637,8 @@ def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch,
         assert task0.__name__ == 'runs-late'
         assert isinstance(task0, sched.SpawnedTask)
         assert task0.poll_() == 0
-        assert task0.stdout_ == b'done\n'
-        assert task0.stderr_ == b''
+        assert bytes(task0.stdout_) == b'done\n'
+        assert bytes(task0.stderr_) == b''
 
         #
         # the primary cohort will have enqueued twice -- for "runs-long" and then
@@ -310,8 +659,8 @@ def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch,
         assert task1.__name__ == 'runs-long'
         assert isinstance(task1, sched.SpawnedTask)
         assert task1.poll_() == 0
-        assert task1.stdout_ == locking_task.result.encode()
-        assert task1.stderr_ == b''
+        assert str(task1.stdout_) == locking_task.result
+        assert str(task1.stderr_) == ''
 
         assert logs.field_equals(level='debug', completed=1, total=1, active=1)
         assert logs.field_equals(level='debug', completed=1, total=2, active=0)
@@ -399,8 +748,8 @@ def test_refill_secondary_cohort(locking_task, confpatch, schedpatch, monkeypatc
 
         assert task0.__name__ == 'runs-long'
         assert isinstance(task0, sched.SpawnedTask)
-        assert task0.stdout_ == locking_task.result.encode()
-        assert task0.stderr_ == b''
+        assert str(task0.stdout_) == locking_task.result
+        assert str(task0.stderr_) == ''
 
         assert logs.field_equals(level='debug', cohort=0, size=2, msg="enqueued cohort")
         assert logs.field_equals(level='debug', active=1, msg="launched pool")
@@ -415,8 +764,8 @@ def test_refill_secondary_cohort(locking_task, confpatch, schedpatch, monkeypatc
 
         assert task1.__name__ == 'on-deck'
         assert isinstance(task1, sched.SpawnedTask)
-        assert task1.stdout_ == b'done\n'
-        assert task1.stderr_ == b''
+        assert bytes(task1.stdout_) == b'done\n'
+        assert bytes(task1.stderr_) == b''
 
         assert logs.field_equals(level='debug', completed=1, total=1, active=1)
         assert logs.field_equals(level='debug', active=2, msg="expanded pool")
@@ -425,8 +774,8 @@ def test_refill_secondary_cohort(locking_task, confpatch, schedpatch, monkeypatc
 
         assert task2.__name__ == 'runs-late'
         assert isinstance(task2, sched.SpawnedTask)
-        assert task2.stdout_ == b'done\n'
-        assert task2.stderr_ == b''
+        assert bytes(task2.stdout_) == b'done\n'
+        assert bytes(task2.stderr_) == b''
 
         assert logs.field_equals(level='debug', completed=2, total=3, active=0)
 

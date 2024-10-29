@@ -1,11 +1,18 @@
 """Execution of scheduled tasks."""
+from __future__ import annotations
+
 import abc
 import datetime
+import io
 import os
 import shutil
+import signal
 import subprocess
+import sys
+import threading
 import time
 import typing
+from dataclasses import dataclass, field
 
 from descriptors import cachedproperty, classonlymethod
 
@@ -69,6 +76,184 @@ class Pipe(typing.NamedTuple):
     def open(cls):
         """Create and construct a Pipe."""
         return cls._make(os.pipe())
+
+
+@dataclass(eq=False)
+class BufferedOutput:
+    """Buffer of data read from a given file object.
+
+    The descriptor of the given file may have been set blocking or non-
+    blocking. By default, it is assumed that this class is given a file
+    whose descriptor has been configured for non-blocking reads. In this
+    configuration, the `receive` method may be invoked regularly,
+    without needlessly blocking execution. Any data that is received may
+    be inspected at `data` or by casting the `BufferedOutput` object
+    itself to `bytes` or `str`. (Note that this data may be incomplete.)
+
+    Alternatively, a file with a blocking descriptor (the language
+    default) may be given. In this case, `receive` will block until the
+    file is completely read, (precisely the usual `file.read()`).
+
+    """
+    file: typing.BinaryIO
+    data: bytes = field(default=b'', init=False)
+
+    def __bytes__(self) -> bytes:
+        return self.data
+
+    def __str__(self) -> str:
+        return self.data.decode()
+
+    def __iadd__(self, chunk) -> BufferedOutput:
+        self.data += chunk
+        return self
+
+    def receive(self) -> None:
+        # data may be empty/None so we test it
+        if read := self.file.read():
+            self += read
+
+    def close(self) -> None:
+        self.file.close()
+
+
+@dataclass(eq=False)
+class StagedOutput(BufferedOutput):
+    """High-performance buffer of data read from a given file object.
+
+    StagedOutput operates like BufferedOutput, with the distinction that
+    data is initially "staged", (in an internal list), for improved
+    performance. Upon close, this staged data is gathered into user-
+    readable data, (available by casting the object to str or bytes).
+
+    The descriptor of the given file object is presumed to be non-
+    blocking. This implementation is only necessary when performing very
+    large numbers of repeated read operations.
+
+    See: `ProgressiveOutput`.
+
+    """
+    _stage: list = field(default_factory=list, init=False)
+
+    def __iadd__(self, chunk) -> StagedOutput:
+        self._stage.append(chunk)
+        return self
+
+    def close(self) -> None:
+        super().close()
+        self.data += b''.join(self._stage)
+        self._stage.clear()
+
+
+class ProgressiveOutput(StagedOutput, threading.Thread):
+    """Buffer of data which may be read from the given file object in a
+    parallel thread.
+
+    As a StagedOutput, the descriptor of the given file object is
+    presumed to have been set non-blocking. A new daemon thread may be
+    launched via the `start` method, which will (repeatedly) read the
+    given file and store its output.
+
+    Read data may be made available for inspection, and the read file
+    closed, via the `stop` (alias `close`) method.
+
+    """
+    def __init__(self, file: typing.BinaryIO, thread_name: str | None):
+        super().__init__(file)
+        threading.Thread.__init__(self, name=thread_name, daemon=True)
+        self._closed = threading.Event()
+
+    def run(self):
+        while not self._closed.is_set():
+            time.sleep(1e-6)
+            self.receive()
+
+    def close(self):
+        self._closed.set()
+        self.join()
+        super().close()
+
+    stop = close
+
+
+@dataclass(eq=False)
+class BufferedInput:
+    """Buffer of data which is written to a given file object in chunks.
+
+    The descriptor of the given file may have been set blocking or non-
+    blocking. By default, it is assumed that this class is given a file
+    whose descriptor has been configured for non-blocking writes. In
+    this configuration, the `send` method may be invoked regularly,
+    without needlessly blocking execution.
+
+    """
+    data: bytes
+    file: typing.BinaryIO
+    buffersize: int = io.DEFAULT_BUFFER_SIZE
+    position: int = field(default=0, init=False)
+
+    @cachedproperty
+    def datasize(self):
+        return len(self.data)
+
+    @property
+    def finished(self) -> bool:
+        return self.file.closed
+
+    def send(self) -> None:
+        if self.finished:
+            return
+
+        chunk = self.data[self.position:self.buffersize]
+        self.file.write(chunk)
+
+        self.position = min(self.position + self.buffersize, self.datasize)
+
+        if self.position == self.datasize:
+            try:
+                self.file.close()
+            except BrokenPipeError:
+                pass
+
+
+def progressive_output(file: typing.BinaryIO, name: str | None) -> ProgressiveOutput:
+    """Launch a `ProgressiveOutput` reader in a parallel thread."""
+    os.set_blocking(file.fileno(), False)
+    reader = ProgressiveOutput(file, name)
+    reader.start()
+    return reader
+
+
+def nonblocking_output(file: typing.BinaryIO) -> BufferedOutput:
+    """Construct a `BufferedOutput` non-blocking reader of the given
+    file.
+
+    The descriptor of the given file is set non-blocking.
+
+    """
+    os.set_blocking(file.fileno(), False)
+    return BufferedOutput(file)
+
+
+def nonblocking_input(file: typing.BinaryIO, data: bytes) -> BufferedInput:
+    """Construct a `BufferedInput` non-blocking writer of the `data` to
+    `file`.
+
+    The descriptor of the given file is set non-blocking.
+
+    """
+    os.set_blocking(file.fileno(), False)
+    return BufferedInput(data, file)
+
+
+class _TaskProcess(typing.NamedTuple):
+
+    process: subprocess.Popen
+    stdin: BufferedInput
+    statein: BufferedInput
+    stdout: ProgressiveOutput
+    stderr: BufferedOutput
+    stateout: BufferedOutput
 
 
 class SpawnedTask(BoundTask, InvokedTask):
@@ -141,6 +326,14 @@ class SpawnedTask(BoundTask, InvokedTask):
         """
         return self._state_parent_ + self._state_child_
 
+    @cachedproperty
+    def _stateinfile_(self) -> typing.BinaryIO:
+        return open(self._statein_.input, 'wb')
+
+    @cachedproperty
+    def _stateoutfile_(self) -> typing.BinaryIO:
+        return open(self._stateout_.output, 'rb')
+
     @InvokedTask._constructor_
     def spawn(cls, task, state):
         """Construct a SpawnedTask extending the specified Task."""
@@ -166,6 +359,9 @@ class SpawnedTask(BoundTask, InvokedTask):
 
         self.stdout_ = None
         self.stderr_ = None
+        self.stdin_ = None
+        self.statein_ = None
+        self.stateout_ = None
 
     @property
     def stopped_(self) -> float | None:
@@ -175,11 +371,25 @@ class SpawnedTask(BoundTask, InvokedTask):
         if self._process_ is not None:
             raise ValueError("task already spawned")
 
-        self._process_ = self._popen()
+        (
+            self._process_,
+            self.stdin_,
+            self.statein_,
+            self.stdout_,
+            self.stderr_,
+            self.stateout_,
+        ) = self._popen()
 
         self._started_ = time.time()
 
-    def _popen(self) -> subprocess.Popen:
+    def _preexec_legacy(self) -> None:
+        # Assign (duplicate) state file descriptors to expected values
+        self._set_fds_()
+
+        # Assign the child process its own new process group
+        os.setpgrp()
+
+    def _popen(self) -> _TaskProcess:
         (program, *args) = self.exec_
 
         executable = shutil.which(program)
@@ -187,31 +397,62 @@ class SpawnedTask(BoundTask, InvokedTask):
         if executable is None:
             raise TaskInvocationError(f'command not found on path: {program}')
 
+        # We prefer to have Popen handle child setup as much as possible
+        # so we opt into new features as they become available.
+        if sys.version_info < (3, 11):
+            # Popen doesn't yet offer process_group so we'll do it ourselves
+            kwargs = dict(
+                preexec_fn=self._preexec_legacy,
+            )
+        else:
+            # We can just use process_group
+            kwargs = dict(
+                # Assign the child process its own new process group
+                process_group=0,
+
+                preexec_fn=self._set_fds_,
+            )
+
         process = subprocess.Popen(
             [executable] + args,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             pass_fds=self._pass_fds_,
-            preexec_fn=self._set_fds_,
+            **kwargs,
         )
 
-        # write inputs
-        process.stdin.write(self.param_.encode())
+        result = _TaskProcess(
+            process=process,
 
-        try:
-            process.stdin.close()
-        except BrokenPipeError:
-            pass
+            # stdout needn't be inspected until the task completes; and, synchronous, non-blocking
+            # processing of the pipe is relatively inefficient (for large payloads). instead,
+            # we'll launch a daemon thread to sit on it and read it as efficiently as possible.
+            stdout=progressive_output(process.stdout,
+                                      f'Reader ({self.__name__} {process.pid}): stdout'),
 
-        with open(self._statein_.input, 'w') as file:
-            file.write(self._state_.read())
+            # we don't expect any other IPC data to be huge; and, at least in the case of
+            # stderr, we want to inspect it as it comes in.
+            #
+            # for simplicity: make pipe descriptors non-blocking & initialize buffer handlers
+            #
+            # (note: this works for pipes on Win32 but only as of Py312)
+            stderr=nonblocking_output(process.stderr),
+            stateout=nonblocking_output(self._stateoutfile_),
+
+            stdin=nonblocking_input(process.stdin, self.param_.encode()),
+            statein=nonblocking_input(self._stateinfile_, self._state_.read().encode()),
+        )
+
+        # write inputs (at least up to buffer size)
+        result.stdin.send()
+        result.statein.send()
 
         # close child's descriptors in parent process
         for parent_desc in self._state_parent_:
             os.close(parent_desc)
 
-        return process
+        return result
 
     def started_(self) -> float | None:
         return self._started_
@@ -238,12 +479,23 @@ class SpawnedTask(BoundTask, InvokedTask):
         expires = self.expires_()
         return expires is not None and expires <= time.time()
 
+    def _signal(self, signal) -> None:
+        if self._process_ is None:
+            raise ValueError("task not spawned")
+
+        if os.getpgid(self._process_.pid) == self._process_.pid:
+            # as expected: signal group
+            os.killpg(self._process_.pid, signal)
+        else:
+            # unexpected: stick to process itself
+            self._process_.send_signal(signal)
+
     def _terminate_(self) -> None:
-        self._process_.terminate()
+        self._signal(signal.SIGTERM)
         self.terminated_ = time.time()
 
     def _kill_(self) -> None:
-        self._process_.kill()
+        self._signal(signal.SIGKILL)
         self.killed_ = time.time()
 
     def poll_(self) -> int | None:
@@ -254,9 +506,11 @@ class SpawnedTask(BoundTask, InvokedTask):
         this method sends the process the TERM signal; if execution has
         continued past this, the KILL signal is sent.
 
-        Sets the SpawnedTask's `ended` time, `stdout` and `stderr`,
-        and records the task's state output, when the process has indeed
-        terminated.
+        BufferedInput and BufferedOutput handlers are invoked to send/
+        receive remaining data.
+
+        Sets the SpawnedTask's `ended` time, and records the task's
+        state output, when the process has terminated.
 
         """
         if self.expired_() and self._process_.poll() is None:
@@ -267,18 +521,20 @@ class SpawnedTask(BoundTask, InvokedTask):
 
         returncode = self._process_.poll()
 
+        self.stdin_.send()
+        self.statein_.send()
+
+        self.stderr_.receive()
+        self.stateout_.receive()
+
         if returncode is not None and self._ended_ is None:
             self._ended_ = time.time()
 
-            self.stdout_ = self._process_.stdout.read()
-            self.stderr_ = self._process_.stderr.read()
+            self.stdout_.close()
 
             # Note: with retry this will also permit 42
             if returncode == 0:
-                with open(self._stateout_.output) as file:
-                    data = file.read()
-
-                self._state_.write(data)
+                self._state_.write(str(self.stateout_))
 
         return returncode
 
@@ -291,7 +547,7 @@ class SpawnedTask(BoundTask, InvokedTask):
         return self.poll_() is not None
 
     def logs_(self):
-        """Parse LogRecords from `stderr`.
+        """Parse LogRecords from `stderr_`.
 
         Raises LogsDecodingError to indicate decoding errors when the
         encoding of a task's stderr log output is configured explicitly.
@@ -302,7 +558,7 @@ class SpawnedTask(BoundTask, InvokedTask):
         if self.stderr_ is None:
             return None
 
-        stream = self._iter_logs_(self.stderr_)
+        stream = self._iter_logs_(bytes(self.stderr_))
         logs = tuple(stream)
 
         if stream.status.errors:
@@ -321,4 +577,4 @@ class SpawnedTaskChainMap(TaskChainMap):
 
     @at_depth('*.path')
     def result_(self, *args, **kwargs):
-        return self._result_(self.__parent__.stdout_, *args, **kwargs)
+        return self._result_(bytes(self.__parent__.stdout_), *args, **kwargs)
