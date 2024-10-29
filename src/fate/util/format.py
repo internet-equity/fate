@@ -126,12 +126,12 @@ class _Raises:
 
 class Decoder(typing.NamedTuple):
 
-    loader: collections.abc.Callable[[str | bytes], typing.Any]
+    loader: typing.Callable[[typing.Union[str, bytes]], typing.Any]
     binary: bool
-    raises: tuple[Exception]
+    raises: typing.Tuple[Exception]
     suffix: str
 
-    def __call__(self, value: str | bytes, *args, **kwargs):
+    def __call__(self, value: typing.Union[str, bytes], *args, **kwargs):
         return self.loader(value, *args, **kwargs)
 
 
@@ -218,7 +218,7 @@ class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
                             raises=self.raises, suffix=self.suffix)
 
     @classmethod
-    def autoload(cls, content: str | bytes, format_, **types):
+    def autoload(cls, content: typing.Union[str, bytes], format_, **types):
         if not format_:
             return (None, None)
 

@@ -162,10 +162,8 @@ def test_large_result(confpatch, schedpatch):
     #
     # execute scheduler with captured logs
     #
-    with (
-        confpatch.caplog() as logs,
-        StopWatch() as session
-    ):
+    with confpatch.caplog() as logs, \
+         StopWatch() as session:
         completed_tasks = list(schedpatch.scheduler())
 
     #
@@ -264,10 +262,8 @@ def test_timeout_child(confpatch, schedpatch):
     #
     # execute scheduler with captured logs
     #
-    with (
-        confpatch.caplog() as logs,
-        StopWatch() as session
-    ):
+    with confpatch.caplog() as logs, \
+         StopWatch() as session:
         completed_tasks = list(schedpatch.scheduler())
 
     #
@@ -344,10 +340,8 @@ def test_timeout_child_trap(confpatch, schedpatch):
     #
     # execute scheduler with captured logs
     #
-    with (
-        confpatch.caplog() as logs,
-        StopWatch() as session
-    ):
+    with confpatch.caplog() as logs, \
+         StopWatch() as session:
         completed_tasks = list(schedpatch.scheduler())
 
     #
@@ -421,10 +415,8 @@ def test_timeout_grandchild(confpatch, schedpatch):
     #
     # execute scheduler with captured logs
     #
-    with (
-        confpatch.caplog() as logs,
-        StopWatch() as session
-    ):
+    with confpatch.caplog() as logs, \
+         StopWatch() as session:
         completed_tasks = list(schedpatch.scheduler())
 
     #
@@ -516,10 +508,8 @@ def test_timeout_grandchild_trap(confpatch, schedpatch):
     #
     # execute scheduler with captured logs
     #
-    with (
-        confpatch.caplog() as logs,
-        StopWatch() as session
-    ):
+    with confpatch.caplog() as logs, \
+         StopWatch() as session:
         completed_tasks = list(schedpatch.scheduler())
 
     #
