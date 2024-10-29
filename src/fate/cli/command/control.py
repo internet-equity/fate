@@ -266,7 +266,7 @@ class ControlCommand(Main):
 
             for status_key in ('stdout_', 'stderr_'):
                 try:
-                    status_data = getattr(task, status_key).decode()
+                    status_data = str(getattr(task, status_key))
                 except UnicodeDecodeError:
                     pass
                 else:
@@ -291,7 +291,7 @@ class ControlCommand(Main):
 
             if result_path:
                 try:
-                    self.write_result(result_path, task.stdout_)
+                    self.write_result(result_path, bytes(task.stdout_))
                 except NotADirectoryError as exc:
                     logger.error(f'cannot record result: '
                                  f'path or sub-path is not a directory: {exc.filename}')
