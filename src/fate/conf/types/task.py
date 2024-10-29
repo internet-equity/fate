@@ -3,6 +3,7 @@ import functools
 import logging
 import pathlib
 import re
+import typing
 import uuid
 from datetime import datetime, timedelta
 from enum import IntEnum
@@ -201,7 +202,7 @@ class TaskConfType(ConfType):
 
     @at_depth(0)
     @property
-    def exec_(self) -> tuple[str]:
+    def exec_(self) -> typing.Tuple[str]:
         # check for superfluous/conflicting argumentation
         keys = ('exec', 'shell', 'command')
         if sum(key in self for key in keys) > 1:
@@ -306,7 +307,7 @@ class TaskConfType(ConfType):
 
     @at_depth(0)
     @property
-    def timeout_(self) -> timedelta | None:
+    def timeout_(self) -> typing.Optional[timedelta]:
         timeout = self.get('timeout', self.__default__.get('timeout'))
 
         # null, false, '', 0 -> None

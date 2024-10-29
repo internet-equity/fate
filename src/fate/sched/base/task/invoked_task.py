@@ -364,7 +364,7 @@ class SpawnedTask(BoundTask, InvokedTask):
         self.stateout_ = None
 
     @property
-    def stopped_(self) -> float | None:
+    def stopped_(self) -> typing.Optional[float]:
         return self.killed_ or self.terminated_
 
     def _spawn_(self):
@@ -454,19 +454,19 @@ class SpawnedTask(BoundTask, InvokedTask):
 
         return result
 
-    def started_(self) -> float | None:
+    def started_(self) -> typing.Optional[float]:
         return self._started_
 
-    def ended_(self) -> float | None:
+    def ended_(self) -> typing.Optional[float]:
         if self._ended_ is None:
             self.poll_()
 
         return self._ended_
 
-    def duration_(self) -> datetime.timedelta | None:
+    def duration_(self) -> typing.Optional[datetime.timedelta]:
         return (ended := self.ended_()) and datetime.timedelta(seconds=ended - self.started_())
 
-    def expires_(self) -> float | None:
+    def expires_(self) -> typing.Optional[float]:
         if (started := self.started_()) is None:
             return None
 
@@ -498,7 +498,7 @@ class SpawnedTask(BoundTask, InvokedTask):
         self._signal(signal.SIGKILL)
         self.killed_ = time.time()
 
-    def poll_(self) -> int | None:
+    def poll_(self) -> typing.Optional[int]:
         """Check whether the task program has exited and return its exit
         code if any.
 
