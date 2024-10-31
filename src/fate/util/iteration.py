@@ -1,4 +1,5 @@
 import functools
+import typing
 
 from descriptors import classonlymethod
 
@@ -60,3 +61,12 @@ class ResultIter:
 
 
 storeresult = ResultIter.storeresult
+
+
+def countas(iterable: typing.Iterable) -> typing.Iterable:
+    count = 0
+
+    for (count, item) in enumerate(iterable, 1):
+        yield item
+
+    return count

@@ -1,5 +1,7 @@
 import itertools
 
+from fate.util.iteration import countas
+
 
 class TaskProcessPool:
     """A set-size, iterable collection of tasks launched for execution
@@ -20,11 +22,11 @@ class TaskProcessPool:
     `list(iterable)`) -- only as much of the given iterable is consumed
     as necessary to fill the pool's available slots.
 
-    Method `iter_ready` checks the pool's slotted tasks for completion,
-    generating a stream of those tasks which have completed. Similar to
-    the above, an iterable may be supplied of ScheduledTasks to be
-    executed; these given tasks will "refill" slots emptied by completed
-    tasks.
+    Method `iter_events` generates a stream of TaskEvents from the
+    pool's slotted tasks, and removes tasks which have completed.
+    Similar to the above, an iterable may be supplied of ScheduledTasks
+    to be executed; these given tasks will "refill" slots emptied by
+    completed tasks.
 
     Insofar as there are no tasks to execute, slots are occupied by
     `None`.
@@ -85,18 +87,22 @@ class TaskProcessPool:
         for (_index, task) in self.enumerate_tasks():
             yield task
 
-    def iter_ready(self, refill=None, *, clear=None):
+    def iter_events(self, refill=None, *, clear=None):
         if not clear and clear is not None and refill is not None:
             raise TypeError(f"ambiguous argumentation: refill specified as "
                             f"{refill!r} yet clear false-y as {clear!r}")
 
         reservoir = None if refill is None else iter(refill)
 
-        count = 0
+        count_ready = count_events = 0
 
         for (index, task) in self.enumerate_tasks():
-            if task.ready_():
-                count += 1
+            events = task.events_()
+
+            count_events += yield from countas(events.read())
+
+            if events.closed:
+                count_ready += 1
 
                 if reservoir:
                     task_fill = next(reservoir, None)
@@ -104,9 +110,7 @@ class TaskProcessPool:
                 elif clear:
                     self.slots[index] = None
 
-                yield task
-
-        return count
+        return (count_ready, count_events)
 
     @property
     def active(self):

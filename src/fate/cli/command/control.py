@@ -11,7 +11,7 @@ import time
 from descriptors import cachedproperty
 
 from fate import sched
-from fate.conf import LogsDecodingError, ResultEncodingError
+from fate.conf import LogRecordDecodeError, ResultEncodeError
 from fate.util.argument import ChoiceMapping
 from fate.util.compat import resources
 from fate.util.compat.path import readlink
@@ -196,7 +196,7 @@ class ControlCommand(Main):
 
             run_info = self.serve(scheduler)
 
-            next_check = run_info.next
+            next_check = run_info.next_time
 
     def serve(self, scheduler):
         """Schedule tasks that are due for execution.
@@ -207,70 +207,68 @@ class ControlCommand(Main):
         """
         logger = self.logger.set(session=lazy_id())
 
-        completed_tasks = scheduler(self.conf, logger)()
+        events = scheduler(self.conf, logger)()
 
-        for completed_task in completed_tasks:
-            self.finish_task(completed_task, logger)
+        for event in events:
+            task_logger = logger.set(task=event.task.__name__)
 
-        logger.info(execution_count=completed_tasks.info.count,
-                    scheduled_next=datetime.datetime.fromtimestamp(completed_tasks.info.next))
+            if isinstance(event, sched.TaskLogEvent):
+                self.log_event(event, task_logger)
+            elif isinstance(event, sched.TaskReadyEvent):
+                self.ready_event(event, task_logger)
+            elif isinstance(event, sched.TaskInvocationFailureEvent):
+                self.fail_event(event, task_logger)
+            else:
+                raise NotImplementedError(type(event))
 
-        return completed_tasks.info
+        logger.info(execution_count=events.info.completed_count,
+                    scheduled_next=datetime.datetime.fromtimestamp(events.info.next_time))
 
-    def finish_task(self, task, session_log):
-        """Handle a ScheduledTask whose execution has completed."""
-        logger = session_log.set(task=task.__name__)
+        return events.info
 
-        # Check for in-process exception
-
-        if isinstance(task, sched.FailedInvocationTask):
-            # Nothing more to do than to report the error
-            logger.error(str(task.error))
-            return
-
-        # Pass through task's logs (subprocess stderr)
-
+    def log_event(self, event, logger):
+        """Handle a TaskLogEvent."""
         try:
-            log_records = task.logs_()
-        except LogsDecodingError as exc:
-            log_records = exc.logs
+            record = event.record()
+        except LogRecordDecodeError as exc:
+            record = exc.record
 
-            logger.warning(records=len(exc.errors),
-                           format=exc.format,
-                           error=str(exc.errors[0]),
+            logger.warning(format=exc.format,
+                           error=str(exc.error),
                            msg="bad log encoding for configured format: "
-                               "record(s) treated as plain text")
+                               "record treated as plain text")
         except UnicodeDecodeError as exc:
-            log_records = ()
-
             logger.error(error=str(exc),
                          msg="bad log character encoding: decoding failed")
 
-        for log_record in log_records:
-            logger.log(*log_record)
+            return
 
-        # Check on task subprocess exit status
+        logger.log(*record)
 
-        returncode = task.poll_()
+    def fail_event(self, event, logger):
+        """Handle a TaskInvocationFailureEvent."""
+        logger.error(str(event.error))
 
-        status = self.CommandStatus.assign(returncode, task.stopped_)
+    def ready_event(self, event, logger):
+        """Handle a TaskReadyEvent."""
+        status = self.CommandStatus.assign(event.returncode, event.stopped)
 
         status_record = {
             'status': str(status),
-            'exitcode': returncode,
-            'duration': human_readable(task.duration_()),
+            'exitcode': event.returncode,
+            'duration': human_readable(event.duration),
         }
 
         if status.erroneous:
             status_level = 'error'
 
-            for status_key in ('stdout_', 'stderr_'):
+            for status_key in ('stdout', 'stderr'):
                 try:
-                    status_data = str(getattr(task, status_key))
+                    status_data = str(getattr(event, status_key))
                 except UnicodeDecodeError:
                     pass
                 else:
-                    status_record[status_key.strip('_')] = snip(status_data)
+                    status_record[status_key] = snip(status_data)
         else:
             status_level = 'info'
 
@@ -279,8 +277,8 @@ class ControlCommand(Main):
         if status is self.CommandStatus.OK:
             # Write task result (subprocess stdout)
             try:
-                result_path = task.path_.result_()
-            except ResultEncodingError as exc:
+                result_path = event.task.path_.result_()
+            except ResultEncodeError as exc:
                 result_path = exc.identifier
 
                 logger.warning(format=exc.format,
@@ -291,7 +289,7 @@ class ControlCommand(Main):
 
             if result_path:
                 try:
-                    self.write_result(result_path, bytes(task.stdout_))
+                    self.write_result(result_path, bytes(event.stdout))
                 except NotADirectoryError as exc:
                     logger.error(f'cannot record result: '
                                  f'path or sub-path is not a directory: {exc.filename}')

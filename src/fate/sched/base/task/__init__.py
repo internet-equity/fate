@@ -3,4 +3,8 @@ from .invoked_task import (  # noqa: F401
     InvokedTask,
     SpawnedTask,
     FailedInvocationTask,
+    TaskEvent,
+    TaskInvocationFailureEvent,
+    TaskLogEvent,
+    TaskReadyEvent,
 )

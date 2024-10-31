@@ -1,4 +1,5 @@
 import gzip
+import json
 import os
 import re
 import signal
@@ -9,8 +10,9 @@ from collections import deque
 import pytest
 
 from fate import sched
+from fate.conf import LogRecordDecodeError
 
-from test.fixture import StopWatch
+from test.fixture import StopWatch, timeout
 
 
 class TimeMock:
@@ -48,17 +50,19 @@ def test_due(confpatch, schedpatch):
     # execute scheduler with captured logs
     #
     with confpatch.caplog() as logs:
-        completed_tasks = list(schedpatch.scheduler())
+        events = list(schedpatch.scheduler())
 
     #
     # task should run and this should be logged
     #
-    assert len(completed_tasks) == 1
+    assert len(events) == 1
 
-    (task,) = completed_tasks
-    assert task.poll_() == 0
-    assert str(task.stdout_) == 'done\n'
-    assert str(task.stderr_) == ''
+    (event,) = events
+    assert event.returncode == 0
+    assert str(event.stdout) == 'done\n'
+    assert str(event.stderr) == ''
+
+    assert event.stopped is None
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
@@ -88,12 +92,12 @@ def test_skips(confpatch, schedpatch, monkeypatch):
     # execute scheduler with captured logs
     #
     with confpatch.caplog('INFO') as logs:
-        completed_tasks = list(schedpatch.scheduler())
+        events = list(schedpatch.scheduler())
 
     #
     # task should NOT run and this should be logged
     #
-    assert len(completed_tasks) == 0
+    assert len(events) == 0
 
     assert logs.field_equals(msg='skipped: suppressed by if/unless condition')
 
@@ -121,20 +125,20 @@ def test_binary_result(confpatch, schedpatch):
     # execute scheduler with captured logs
     #
     with confpatch.caplog() as logs:
-        completed_tasks = list(schedpatch.scheduler())
+        events = list(schedpatch.scheduler())
 
     #
     # task should run and this should be logged
     #
-    assert len(completed_tasks) == 1
+    assert len(events) == 1
 
-    (task,) = completed_tasks
+    (event,) = events
 
-    assert task.poll_() == 0
+    assert event.returncode == 0
 
-    assert gzip.decompress(bytes(task.stdout_)) == confpatch.conf.task.binary.param.encode()
+    assert gzip.decompress(bytes(event.stdout)) == confpatch.conf.task.binary.param.encode()
 
-    assert bytes(task.stderr_) == b''
+    assert bytes(event.stderr) == b''
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
@@ -164,26 +168,218 @@ def test_large_result(confpatch, schedpatch):
     #
     with confpatch.caplog() as logs, \
          StopWatch() as session:
-        completed_tasks = list(schedpatch.scheduler())
+        events = list(schedpatch.scheduler())
 
     #
     # task should run and this should be logged
     #
-    assert len(completed_tasks) == 1
+    assert len(events) == 1
 
-    (task,) = completed_tasks
+    (event,) = events
 
-    assert task.poll_() == 0
+    assert event.returncode == 0
 
-    assert str(task.stderr_) == ''
+    assert str(event.stderr) == ''
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
-    assert task.duration_().total_seconds() < 1
+    assert event.duration.total_seconds() < 1
 
     assert session.seconds < 1
 
-    assert len(bytes(task.stdout_)) == HUNDRED_MB
+    assert len(bytes(event.stdout)) == HUNDRED_MB
+
+
+def test_invocation_failure(confpatch, schedpatch):
+    #
+    # configure a task whose executable cannot be found on PATH
+    #
+    confpatch.set_tasks(
+        {
+            'missing': {
+                'exec': 'fohdfskjh',
+                'schedule': '0 * * * *',
+            },
+        }
+    )
+
+    #
+    # set up scheduler with a long-previous check s.t. task should execute
+    #
+    schedpatch.set_last_check(offset=3600)
+
+    #
+    # execute scheduler with captured logs
+    #
+    events = list(schedpatch.scheduler())
+
+    assert len(events) == 1
+
+    (fail_event,) = events
+
+    assert isinstance(fail_event, sched.TaskInvocationFailureEvent)
+
+    assert str(fail_event.error) == 'command not found on path: fohdfskjh'
+
+
+@timeout(2)
+def test_log_event(locking_task, confpatch, schedpatch):
+    #
+    # configure a locking task which writes log records to stderr
+    #
+    msgs = (
+        "I'm just getting set up here...",
+        {'level': 'WARN', 'message': "NOW we're cookin'!"},
+        "...See ya'",
+    )
+    confpatch.set_tasks(
+        {
+            'logs': {
+                **locking_task.conf(logs=msgs),
+                'schedule': '0 * * * *',
+            },
+        }
+    )
+
+    #
+    # set up scheduler with a long-previous check s.t. task should execute
+    #
+    schedpatch.set_last_check(offset=3600)
+
+    #
+    # execute scheduler with captured logs
+    #
+    with confpatch.caplog() as logs:
+        events = schedpatch.scheduler()
+
+        # we should get a log event right away
+        log_event = next(events)
+
+        assert isinstance(log_event, sched.TaskLogEvent)
+
+        assert log_event.message == b'<2> %b' % msgs[0].encode()
+
+        assert log_event.record() == ('INFO', msgs[0])
+
+        # but the task should be hung
+        assert not log_event.task.ready_()
+
+        # now let's release it
+        locking_task.release()
+
+        tail_events = list(events)
+
+    #
+    # task should be complete and all should be logged
+    #
+    assert len(tail_events) == 3
+
+    (log_event1, log_event2, ready_event) = tail_events
+
+    assert isinstance(log_event1, sched.TaskLogEvent)
+
+    record1 = {key: value for key, value in msgs[1].items() if key != 'level'}
+
+    assert log_event1.record() == ('WARNING', record1)
+
+    assert isinstance(log_event2, sched.TaskLogEvent)
+
+    assert log_event2.record() == ('INFO', msgs[2])
+
+    assert isinstance(ready_event, sched.TaskReadyEvent)
+
+    assert ready_event.returncode == 0
+
+    assert bytes(ready_event.stdout) == b'done\n'
+
+    message1 = json.dumps(record1)
+
+    assert str(ready_event.stderr) == (f'<2> {msgs[0]}\0'
+                                       f'<3> {message1}\0'
+                                       f'<2> {msgs[2]}\0')
+
+    assert logs.field_equals(completed=0, total=0, active=1, events=1)
+    assert logs.field_equals(completed=0, total=0, active=1, events=2)
+    assert logs.field_equals(completed=1, total=1, active=0, events=1)
+
+
+def test_bad_logs(confpatch, schedpatch):
+    #
+    # configure a task which writes bad log records to stderr
+    #
+    confpatch.set_tasks(
+        {
+            'logs': {
+                'shell': r'''
+                    echo -n '{bad json...\0' >&2
+                    echo -n 'not unicode!\0' | gzip -c >&2
+                    echo -n '{"technically": "fine"}\0' >&2
+                    echo -n 'no terminator remainder' >&2
+
+                    echo 'done'
+                ''',
+                'schedule': '0 * * * *',
+                'format': {'log': 'json'},
+            },
+        }
+    )
+
+    #
+    # set up scheduler with a long-previous check s.t. task should execute
+    #
+    schedpatch.set_last_check(offset=3600)
+
+    #
+    # execute scheduler with captured logs
+    #
+    events = list(schedpatch.scheduler())
+
+    #
+    # compressed data will contain null bytes s.t. it is interpreted as 3 bad records
+    #
+    assert len(events) == 7
+
+    (log_event0, log_event1, log_event2, log_event3, log_event4, log_event5, ready_event) = events
+
+    assert isinstance(log_event0, sched.TaskLogEvent)
+
+    assert log_event0.message == b'{bad json...'
+
+    with pytest.raises(LogRecordDecodeError) as exc:
+        log_event0.record()
+
+    assert exc.value.format == 'json'
+    assert isinstance(exc.value.error, json.JSONDecodeError)
+    assert exc.value.record == ('INFO', log_event0.message.decode())
+
+    assert isinstance(log_event1, sched.TaskLogEvent)
+    assert isinstance(log_event2, sched.TaskLogEvent)
+    assert isinstance(log_event3, sched.TaskLogEvent)
+
+    with pytest.raises(UnicodeDecodeError):
+        log_event1.record()
+    with pytest.raises(UnicodeDecodeError):
+        log_event2.record()
+    with pytest.raises(UnicodeDecodeError):
+        log_event3.record()
+
+    assert isinstance(log_event4, sched.TaskLogEvent)
+    assert log_event4.message == b'{"technically": "fine"}'
+    assert log_event4.record() == ('INFO', {"technically": "fine"})
+
+    assert isinstance(log_event5, sched.TaskLogEvent)
+    assert log_event5.message == b'no terminator remainder'
+
+    with pytest.raises(LogRecordDecodeError) as exc:
+        log_event5.record()
+
+    assert exc.value.format == 'json'
+    assert isinstance(exc.value.error, json.JSONDecodeError)
+    assert exc.value.record == ('INFO', log_event5.message.decode())
+
+    assert isinstance(ready_event, sched.TaskReadyEvent)
+    assert ready_event.returncode == 0
+    assert str(ready_event.stdout) == 'done\n'
 
 
 def test_timeout_noop(confpatch, schedpatch):
@@ -209,20 +405,22 @@ def test_timeout_noop(confpatch, schedpatch):
     # execute scheduler with captured logs
     #
     with confpatch.caplog() as logs:
-        completed_tasks = list(schedpatch.scheduler())
+        events = list(schedpatch.scheduler())
 
     #
     # task should run and this should be logged
     #
-    assert len(completed_tasks) == 1
+    assert len(events) == 1
 
-    (task,) = completed_tasks
+    (event,) = events
 
-    assert task.poll_() == 0
+    assert event.stopped is None
 
-    assert bytes(task.stdout_) == b'done\n'
+    assert event.returncode == 0
 
-    assert bytes(task.stderr_) == b''
+    assert bytes(event.stdout) == b'done\n'
+
+    assert bytes(event.stderr) == b''
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
@@ -264,39 +462,42 @@ def test_timeout_child(confpatch, schedpatch):
     #
     with confpatch.caplog() as logs, \
          StopWatch() as session:
-        completed_tasks = list(schedpatch.scheduler())
+        events = list(schedpatch.scheduler())
 
     #
     # task should run and this should be logged
     #
-    assert len(completed_tasks) == 1
+    assert len(events) == 1
 
-    (task,) = completed_tasks
+    (event,) = events
 
-    assert task.poll_() == -signal.SIGTERM
+    assert event.stopped
+    assert event.stopped == pytest.approx(event.ended)
 
-    assert str(task.stderr_) == ''
+    assert event.returncode == -signal.SIGTERM
+
+    assert str(event.stderr) == ''
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
-    assert task.ended_() >= task.expires_()
+    assert event.ended >= event.expires
 
-    assert 1 <= task.duration_().total_seconds() < 2
+    assert 1 <= event.duration.total_seconds() < 2
 
     assert 1 <= session.seconds < 2
 
     # we shouldn't see "finished"
     stdout_match = re.fullmatch(
         r'started: (?P<cpid>\d+) +(?P<cpgid>\d+)\n',
-        str(task.stdout_)
+        str(event.stdout)
     )
 
-    assert stdout_match, str(task.stdout_)
+    assert stdout_match, str(event.stdout)
 
     (cpid, cpgid) = (int(group) for group in (stdout_match['cpid'],
                                               stdout_match['cpgid']))
 
-    assert cpid == cpgid == task._process_.pid
+    assert cpid == cpgid == event.task._process_.pid
 
     # nothing should remain in process group
     with pytest.raises(ProcessLookupError):
@@ -342,39 +543,39 @@ def test_timeout_child_trap(confpatch, schedpatch):
     #
     with confpatch.caplog() as logs, \
          StopWatch() as session:
-        completed_tasks = list(schedpatch.scheduler())
+        events = list(schedpatch.scheduler())
 
     #
     # task should run and this should be logged
     #
-    assert len(completed_tasks) == 1
+    assert len(events) == 1
 
-    (task,) = completed_tasks
+    (event,) = events
 
-    assert task.poll_() == -signal.SIGKILL
+    assert event.returncode == -signal.SIGKILL
 
-    assert str(task.stderr_) == ''
+    assert str(event.stderr) == ''
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
-    assert task.ended_() >= task.expires_()
+    assert event.ended >= event.expires
 
-    assert 1 <= task.duration_().total_seconds() < 2
+    assert 1 <= event.duration.total_seconds() < 2
 
     assert 1 <= session.seconds < 2
 
     # we shouldn't see "finished"
     stdout_match = re.fullmatch(
         r'started: (?P<cpid>\d+) +(?P<cpgid>\d+)\n',
-        str(task.stdout_)
+        str(event.stdout)
     )
 
-    assert stdout_match, str(task.stdout_)
+    assert stdout_match, str(event.stdout)
 
     (cpid, cpgid) = (int(group) for group in (stdout_match['cpid'],
                                               stdout_match['cpgid']))
 
-    assert cpid == cpgid == task._process_.pid
+    assert cpid == cpgid == event.task._process_.pid
 
     # nothing should remain in process group
     with pytest.raises(ProcessLookupError):
@@ -417,24 +618,24 @@ def test_timeout_grandchild(confpatch, schedpatch):
     #
     with confpatch.caplog() as logs, \
          StopWatch() as session:
-        completed_tasks = list(schedpatch.scheduler())
+        events = list(schedpatch.scheduler())
 
     #
     # task should run and this should be logged
     #
-    assert len(completed_tasks) == 1
+    assert len(events) == 1
 
-    (task,) = completed_tasks
+    (event,) = events
 
-    assert task.poll_() == -signal.SIGTERM
+    assert event.returncode == -signal.SIGTERM
 
-    assert str(task.stderr_) == ''
+    assert str(event.stderr) == ''
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
-    assert task.ended_() >= task.expires_()
+    assert event.ended >= event.expires
 
-    assert 1 <= task.duration_().total_seconds() < 2
+    assert 1 <= event.duration.total_seconds() < 2
 
     assert 1 <= session.seconds < 2
 
@@ -442,19 +643,19 @@ def test_timeout_grandchild(confpatch, schedpatch):
     stdout_match = re.fullmatch(
         r'started: (?P<cpid>\d+) +(?P<cpgid>\d+)\n'
         r'grandchild: (?P<gpid>\d+) +(?P<gpgid>\d+)\n',
-        str(task.stdout_)
+        str(event.stdout)
     )
 
-    assert stdout_match, str(task.stdout_)
+    assert stdout_match, str(event.stdout)
 
     (cpid, cpgid, gpid, gpgid) = (int(group) for group in (stdout_match['cpid'],
                                                            stdout_match['cpgid'],
                                                            stdout_match['gpid'],
                                                            stdout_match['gpgid']))
 
-    assert cpid == task._process_.pid
+    assert cpid == event.task._process_.pid
 
-    assert gpid != task._process_.pid
+    assert gpid != event.task._process_.pid
 
     assert cpid == cpgid == gpgid
 
@@ -510,41 +711,41 @@ def test_timeout_grandchild_trap(confpatch, schedpatch):
     #
     with confpatch.caplog() as logs, \
          StopWatch() as session:
-        completed_tasks = list(schedpatch.scheduler())
+        events = list(schedpatch.scheduler())
 
     #
     # task should run and this should be logged
     #
-    assert len(completed_tasks) == 1
+    assert len(events) == 1
 
-    (task,) = completed_tasks
+    (event,) = events
 
-    assert task.poll_() == -signal.SIGTERM
+    assert event.returncode == -signal.SIGTERM
 
-    assert str(task.stderr_) == ''
+    assert str(event.stderr) == ''
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
-    assert task.ended_() >= task.expires_()
+    assert event.ended >= event.expires
 
-    assert 1 <= task.duration_().total_seconds() < 2
+    assert 1 <= event.duration.total_seconds() < 2
 
     assert 1 <= session.seconds < 2
 
     # we shouldn't see "finished"
     stdout_match = re.fullmatch(
         r'started: (?P<gpid>\d+) +(?P<gpgid>\d+)\n',
-        str(task.stdout_)
+        str(event.stdout)
     )
 
-    assert stdout_match, str(task.stdout_)
+    assert stdout_match, str(event.stdout)
 
     (gpid, gpgid) = (int(group) for group in (stdout_match['gpid'],
                                               stdout_match['gpgid']))
 
-    assert gpid != task._process_.pid
+    assert gpid != event.task._process_.pid
 
-    assert gpgid == task._process_.pid
+    assert gpgid == event.task._process_.pid
 
     # grandchild was *not* stopped (but we continued nonetheless)
     os.kill(gpid, 0)  # this check-in won't raise an exception
@@ -571,7 +772,7 @@ def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch,
     confpatch.set_tasks(
         {
             'runs-long': {
-                **locking_task.conf,
+                **locking_task.conf(),
                 'schedule': '0 * * * *',
             },
             'runs-late': {
@@ -620,15 +821,15 @@ def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch,
         # a minute will immediately appear to have passed -- therefore the first task
         # to complete should be "runs-late", enqueued by the re-check.
         #
-        tasks = schedpatch.scheduler()
+        events = schedpatch.scheduler()
 
-        task0 = next(tasks)
+        event0 = next(events)
 
-        assert task0.__name__ == 'runs-late'
-        assert isinstance(task0, sched.SpawnedTask)
-        assert task0.poll_() == 0
-        assert bytes(task0.stdout_) == b'done\n'
-        assert bytes(task0.stderr_) == b''
+        assert event0.task.__name__ == 'runs-late'
+        assert isinstance(event0, sched.TaskReadyEvent)
+        assert event0.returncode == 0
+        assert bytes(event0.stdout) == b'done\n'
+        assert bytes(event0.stderr) == b''
 
         #
         # the primary cohort will have enqueued twice -- for "runs-long" and then
@@ -644,19 +845,19 @@ def test_refill_primary_cohort(locking_task, confpatch, schedpatch, monkeypatch,
         locking_task.release()
 
         # exhaust the scheduler of completed tasks
-        (task1,) = tasks
+        (event1,) = events
 
-        assert task1.__name__ == 'runs-long'
-        assert isinstance(task1, sched.SpawnedTask)
-        assert task1.poll_() == 0
-        assert str(task1.stdout_) == locking_task.result
-        assert str(task1.stderr_) == ''
+        assert event1.task.__name__ == 'runs-long'
+        assert isinstance(event1, sched.TaskReadyEvent)
+        assert event1.returncode == 0
+        assert str(event1.stdout) == locking_task.result
+        assert str(event1.stderr) == ''
 
         assert logs.field_equals(level='debug', completed=1, total=1, active=1)
         assert logs.field_equals(level='debug', completed=1, total=2, active=0)
 
-    assert tasks.info.count == 2
-    assert tasks.info.next == 3600  # one hour past the epoch
+    assert events.info.completed_count == 2
+    assert events.info.next_time == 3600  # one hour past the epoch
 
 
 def test_refill_secondary_cohort(locking_task, confpatch, schedpatch, monkeypatch, tmp_path):
@@ -676,7 +877,7 @@ def test_refill_secondary_cohort(locking_task, confpatch, schedpatch, monkeypatc
     confpatch.set_tasks(
         {
             'runs-long': {
-                **locking_task.conf,
+                **locking_task.conf(),
                 'schedule': '0 * * * *',
                 'scheduling': {'tenancy': 1},
             },
@@ -732,14 +933,14 @@ def test_refill_secondary_cohort(locking_task, confpatch, schedpatch, monkeypatc
     # execute scheduler with captured logs
     #
     with confpatch.caplog() as logs:
-        tasks = schedpatch.scheduler()
+        events = schedpatch.scheduler()
 
-        task0 = next(tasks)
+        event0 = next(events)
 
-        assert task0.__name__ == 'runs-long'
-        assert isinstance(task0, sched.SpawnedTask)
-        assert str(task0.stdout_) == locking_task.result
-        assert str(task0.stderr_) == ''
+        assert event0.task.__name__ == 'runs-long'
+        assert isinstance(event0, sched.TaskReadyEvent)
+        assert str(event0.stdout) == locking_task.result
+        assert str(event0.stderr) == ''
 
         assert logs.field_equals(level='debug', cohort=0, size=2, msg="enqueued cohort")
         assert logs.field_equals(level='debug', active=1, msg="launched pool")
@@ -750,24 +951,24 @@ def test_refill_secondary_cohort(locking_task, confpatch, schedpatch, monkeypatc
         #
         # (during subsequent enqueuing of task "runs-late" and clean-up of primary cohort)
         #
-        task1 = next(tasks)
+        event1 = next(events)
 
-        assert task1.__name__ == 'on-deck'
-        assert isinstance(task1, sched.SpawnedTask)
-        assert bytes(task1.stdout_) == b'done\n'
-        assert bytes(task1.stderr_) == b''
+        assert event1.task.__name__ == 'on-deck'
+        assert isinstance(event1, sched.TaskReadyEvent)
+        assert bytes(event1.stdout) == b'done\n'
+        assert bytes(event1.stderr) == b''
 
         assert logs.field_equals(level='debug', completed=1, total=1, active=1)
         assert logs.field_equals(level='debug', active=2, msg="expanded pool")
 
-        (task2,) = tasks
+        (event2,) = events
 
-        assert task2.__name__ == 'runs-late'
-        assert isinstance(task2, sched.SpawnedTask)
-        assert bytes(task2.stdout_) == b'done\n'
-        assert bytes(task2.stderr_) == b''
+        assert event2.task.__name__ == 'runs-late'
+        assert isinstance(event2, sched.TaskReadyEvent)
+        assert bytes(event2.stdout) == b'done\n'
+        assert bytes(event2.stderr) == b''
 
         assert logs.field_equals(level='debug', completed=2, total=3, active=0)
 
-    assert tasks.info.count == 3
-    assert tasks.info.next == 3600  # one hour past the epoch
+    assert events.info.completed_count == 3
+    assert events.info.next_time == 3600  # one hour past the epoch
