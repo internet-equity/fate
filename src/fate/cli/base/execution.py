@@ -24,6 +24,7 @@ class OneOffExecutor(CommandInterface, argcmdr.Command):
         args: typing.Sequence[str]
         name: str = ''
         stdin: bytes = b''
+        timeout: typing.Optional[int] = None
 
     @staticmethod
     def print_output(name, text):
@@ -32,20 +33,30 @@ class OneOffExecutor(CommandInterface, argcmdr.Command):
 
         """
         if '\n' in text:
-            print(f'{name}:', textwrap.indent(text, '  '), sep='\n\n')
+            print(f'{name}:', textwrap.indent(text.strip(), '  '), sep='\n\n')
         else:
             print(f'{name}:', text)
 
     @classmethod
-    def print_report(cls, command, retcode, stdout, stderr):
+    def print_report(cls, command, retcode, stdout, stderr, error):
         """Print a report of task command execution outcomes."""
         print('Name:', command.name or '-')
 
-        print('Command:', *command.args)
+        print()
+
+        cls.print_output('Command', ' '.join(command.args))
 
         print()
 
-        print('Status:', cls.CommandStatus.status(retcode), f'(Exit code {retcode})')
+        if error:
+            if isinstance(error, subprocess.TimeoutExpired):
+                status = ('Timeout', f'({error.timeout}s)')
+            else:
+                raise NotImplementedError(error)
+        else:
+            status = (cls.CommandStatus.select(retcode), f'(Exit code {retcode})')
+
+        print('Status:', *status)
 
         print()
 
@@ -111,17 +122,33 @@ class OneOffExecutor(CommandInterface, argcmdr.Command):
                 parser.exit(127, f'{parser.prog}: error: {program}: '
                                  f'command not found on path{hint}\n')
 
-            result = subprocess.run(
-                [executable] + command_args,
+            try:
+                result = subprocess.run(
+                    [executable] + command_args,
 
-                input=command.stdin,
+                    input=command.stdin,
 
-                capture_output=True,
+                    timeout=command.timeout,
 
-                # it's assumed that even if stdin is set to a TTY it's purposeful
-                # here; so, indicate to task.param.read() not to worry about it:
-                env=dict(os.environ, FATE_READ_TTY_PARAM='1'),
-            )
+                    capture_output=True,
+
+                    # it's assumed that even if stdin is set to a TTY it's purposeful
+                    # here; so, indicate to task.param.read() not to worry about it:
+                    env=dict(os.environ, FATE_READ_TTY_PARAM='1'),
+                )
+            except subprocess.TimeoutExpired as exc:
+                result = None
+                returncode = None
+
+                error = exc
+                stdout = exc.stdout or b''
+                stderr = exc.stderr or b''
+            else:
+                error = None
+
+                returncode = result.returncode
+                stdout = result.stdout
+                stderr = result.stderr
 
             if send:
                 try:
@@ -132,21 +159,17 @@ class OneOffExecutor(CommandInterface, argcmdr.Command):
                     raise ValueError("get_command() generated more than one command")
 
             if args.stdout:
-                args.stdout.write(result.stdout)
+                args.stdout.write(stdout)
                 stdout = f'[See {args.stdout.name}]'
                 args.stdout.close()
-            else:
-                stdout = result.stdout
 
             if args.stderr:
-                args.stderr.write(result.stderr)
+                args.stderr.write(stderr)
                 stderr = f'[See {args.stderr.name}]'
                 args.stderr.close()
-            else:
-                stderr = result.stderr
 
             if args.report:
-                self.print_report(command, result.returncode, stdout, stderr)
+                self.print_report(command, returncode, stdout, stderr, error)
 
     def get_command(self, args):
         """Determine task name (if any) and command to execute

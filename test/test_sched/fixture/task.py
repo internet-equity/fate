@@ -1,5 +1,5 @@
 import fcntl
-import textwrap
+import pathlib
 
 from descriptors import cachedproperty
 
@@ -11,27 +11,13 @@ class LockingTaskFixture:
         self.result = result
         self.locked = False
 
-    @property
-    def conf(self):
+    def conf(self, logs=()):
         return {
-            'shell': {
-                'executable': 'python',
-                'script': textwrap.dedent(
-                    '''\
-                    import fcntl, json, sys
-
-                    param = json.load(sys.stdin)
-
-                    with open(param['lock_path'], 'w') as fd:
-                        fcntl.lockf(fd, fcntl.LOCK_EX)
-                        print(param['result'], end='')
-                        fcntl.lockf(fd, fcntl.LOCK_UN)
-                    '''
-                ),
-            },
+            'exec': str(pathlib.Path(__file__).parent / 'locking_task.py'),
             'param': {
                 'lock_path': str(self.lock_path),
                 'result': self.result,
+                'logs': list(logs),
             },
         }
 

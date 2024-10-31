@@ -1,6 +1,5 @@
 import collections
 import functools
-import logging
 import pathlib
 import re
 import typing
@@ -14,7 +13,6 @@ from descriptors import classproperty
 
 from fate.util.compat.os import cpu_count
 from fate.util.format import Dumper, SLoader
-from fate.util.iteration import storeresult
 from fate.util.sentinel import Undefined
 from fate.util.timedelta import parse_timedelta
 
@@ -30,7 +28,7 @@ from ..error import (
     ConfBracketError,
     ConfTypeError,
     ConfValueError,
-    ResultEncodingError,
+    ResultEncodeError,
 )
 
 from .base import (
@@ -47,10 +45,6 @@ class TaskConfType(ConfType):
     """
     _Dumper = Dumper
     _Loader = SLoader
-
-    _LogRecord = collections.namedtuple('LogRecord', ('level', 'record'))
-
-    _LogDecodingStatus = collections.namedtuple('LogDecodingStatus', ('format', 'errors'))
 
     class _DefaultFormat(StrEnum):
 
@@ -87,9 +81,6 @@ class TaskConfType(ConfType):
 
         def self_format(self, task, schedule=None):
             return self.format(task_name=task.__name__, schedule=schedule)
-
-    _deserializer_error = ('{conf_path}: unsupported serialization format: {format_!r} '
-                           f"(select from: {_Loader.__deserializers__})")
 
     _result_format_error = ('{conf_path}: unsupported result format: {format_!r} '
                             f"(select from: {_Loader.__names__})")
@@ -372,78 +363,6 @@ class TaskConfType(ConfType):
         else:
             return dumper(param)
 
-    _task_log_pattern = re.compile(r'<([1-5])> *(.*)')
-
-    @staticmethod
-    def _normalize_log_level(value):
-        if isinstance(value, int):
-            if value < 10:
-                value *= 10
-
-            return logging._levelToName.get(value)
-
-        if isinstance(value, str):
-            value = value.upper()
-
-            return value if value in logging._nameToLevel else None
-
-        raise TypeError("log level to normalize may be of type int or str "
-                        f"not {value.__class__.__name__}")
-
-    @at_depth(0)
-    @storeresult('status')
-    def _iter_logs_(self, stderr: bytes):
-        format_ = self.format_['log']
-
-        status = self._LogDecodingStatus(format_, [])
-
-        for log_line in stderr.decode().split('\0'):
-            if not log_line:
-                continue
-
-            if level_match := self._task_log_pattern.fullmatch(log_line):
-                (record_code, record_text) = level_match.groups()
-                record_level = self._normalize_log_level(int(record_code))
-            else:
-                (record_level, record_text) = (None, log_line)
-
-            try:
-                (record_struct, _loader) = self._Loader.autoload(record_text, format_)
-            except self._Loader.NonAutoError:
-                try:
-                    loader = self._Loader[format_]
-                except KeyError:
-                    loader = None
-
-                if loader is None or loader.binary:
-                    raise ConfValueError(
-                        self._deserializer_error.format(
-                            conf_path=f'{self.__name__}.format.log',
-                            format_=format_,
-                        )
-                    )
-
-                try:
-                    record_struct = loader(record_text)
-                except loader.raises as exc:
-                    status.errors.append(exc)
-                    record_struct = None
-
-            struct_level = record_struct.get('level') if isinstance(record_struct, dict) else None
-
-            if struct_level:
-                if isinstance(struct_level, (int, str)):
-                    struct_level = self._normalize_log_level(struct_level)
-                else:
-                    struct_level = None
-
-            yield self._LogRecord(
-                level=(record_level or struct_level or 'INFO'),
-                record=(record_struct if isinstance(record_struct, dict) else record_text),
-            )
-
-        return status
-
     @at_depth('*.path')
     def _result_(self, stdout: bytes, dt=None):
         result_spec = self.result
@@ -516,7 +435,7 @@ class TaskConfType(ConfType):
 
                     break
             else:
-                raise ResultEncodingError(format_, errors, identifier)
+                raise ResultEncodeError(format_, errors, identifier)
 
         return identifier.with_suffix(loader.suffix) if loader else identifier
 

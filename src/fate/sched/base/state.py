@@ -1,7 +1,7 @@
 """Task-state connector"""
 from lmdb_dict import CachedLmdbDict
 
-from fate.conf import ConfValueError, StateEncodingError
+from fate.conf import ConfValueError, StateEncodeError
 
 
 class BoundTaskStateManager:
@@ -33,7 +33,7 @@ class TaskStateManager:
     Values are cached in memory to avoid redundant serializations.
 
     """
-    class _AutoEncodingError(Exception):
+    class _AutoEncodeError(Exception):
         pass
 
     def __init__(self, state_path):
@@ -75,7 +75,7 @@ class TaskStateManager:
             pass
         else:
             if loader is None:
-                raise cls._AutoEncodingError
+                raise cls._AutoEncodeError
 
             return data
 
@@ -92,7 +92,7 @@ class TaskStateManager:
         try:
             return loader(output)
         except loader.raises as exc:
-            raise StateEncodingError(format_, exc)
+            raise StateEncodeError(format_, exc)
 
     def bind(self, task):
         return BoundTaskStateManager(self, task)
@@ -134,7 +134,7 @@ class TaskStateManager:
         # deserialize output
         try:
             data = self._load_state(task, output)
-        except self._AutoEncodingError:
+        except self._AutoEncodeError:
             data = output
 
         # update db

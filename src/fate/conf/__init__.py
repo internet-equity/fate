@@ -6,11 +6,11 @@ from .error import (  # noqa: F401
     ConfSyntaxError,
     ConfTypeError,
     ConfValueError,
-    LogsDecodingError,
+    LogRecordDecodeError,
     MultiConfError,
     NoConfError,
-    ResultEncodingError,
-    StateEncodingError,
+    ResultEncodeError,
+    StateEncodeError,
 )
 
 

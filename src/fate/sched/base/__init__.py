@@ -5,4 +5,8 @@ from .task import (  # noqa: F401
     SpawnedTask,
     FailedInvocationTask,
     ScheduledTask,
+    TaskEvent,
+    TaskInvocationFailureEvent,
+    TaskLogEvent,
+    TaskReadyEvent,
 )

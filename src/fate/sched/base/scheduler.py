@@ -44,8 +44,8 @@ class TaskScheduler(Resets):
     """
     class SchedInfo(typing.NamedTuple):
 
-        count: int
-        next: float
+        completed_count: int
+        next_time: float
 
     @classproperty
     def module_short(cls):

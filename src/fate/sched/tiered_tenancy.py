@@ -82,12 +82,14 @@ class TieredTenancyScheduler(TaskScheduler):
 
                 time.sleep(self.poll_frequency)
 
-                count_ready = yield from pool.iter_ready(refill=queue.tenancy_tasks(pool.size))
+                (count_ready,
+                 count_events) = yield from pool.iter_events(refill=queue.tenancy_tasks(pool.size))
 
-                if count_ready:
+                if count_ready or count_events:
                     count_completed += count_ready
 
-                    self.logger.debug(completed=count_ready,
+                    self.logger.debug(events=count_events,
+                                      completed=count_ready,
                                       total=count_completed,
                                       active=pool.count)
 

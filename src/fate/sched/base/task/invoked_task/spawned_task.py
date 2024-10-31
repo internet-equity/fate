@@ -1,55 +1,27 @@
 """Execution of scheduled tasks."""
 from __future__ import annotations
 
-import abc
 import datetime
-import io
 import os
 import shutil
 import signal
 import subprocess
 import sys
-import threading
 import time
 import typing
-from dataclasses import dataclass, field
 
 from descriptors import cachedproperty, classonlymethod
 
-from fate.conf.error import LogsDecodingError
+from fate.common.log import LogReader
 from fate.conf.types import TaskChainMap
+from fate.util import stream
 from fate.util.datastructure import at_depth, adopt
 
-from .ext import BoundTask, TaskConfExt
+from .. import ext
 
-
-class TaskInvocationError(LookupError):
-    """Exception raised for a task whose command could not be invoked."""
-
-
-class InvokedTask(TaskConfExt):
-    """Abstract base to task classes extended for invocation of their
-    commands by the operating system.
-
-    """
-    @abc.abstractmethod
-    def ready_(self) -> bool:
-        pass
-
-
-class FailedInvocationTask(InvokedTask):
-    """Task whose command could not be invoked."""
-
-    @InvokedTask._constructor_
-    def fail(cls, task, err):
-        return cls(task, err)
-
-    def __init__(self, data, /, err):
-        super().__init__(data)
-        self.error = err
-
-    def ready_(self) -> bool:
-        return True
+from .base import InvokedTask
+from .event import TaskEvents, TaskLogEvent, TaskReadyEvent
+from .failed_task import TaskInvocationError
 
 
 class PipeRW(typing.NamedTuple):
@@ -78,185 +50,17 @@ class Pipe(typing.NamedTuple):
         return cls._make(os.pipe())
 
 
-@dataclass(eq=False)
-class BufferedOutput:
-    """Buffer of data read from a given file object.
-
-    The descriptor of the given file may have been set blocking or non-
-    blocking. By default, it is assumed that this class is given a file
-    whose descriptor has been configured for non-blocking reads. In this
-    configuration, the `receive` method may be invoked regularly,
-    without needlessly blocking execution. Any data that is received may
-    be inspected at `data` or by casting the `BufferedOutput` object
-    itself to `bytes` or `str`. (Note that this data may be incomplete.)
-
-    Alternatively, a file with a blocking descriptor (the language
-    default) may be given. In this case, `receive` will block until the
-    file is completely read, (precisely the usual `file.read()`).
-
-    """
-    file: typing.BinaryIO
-    data: bytes = field(default=b'', init=False)
-
-    def __bytes__(self) -> bytes:
-        return self.data
-
-    def __str__(self) -> str:
-        return self.data.decode()
-
-    def __iadd__(self, chunk) -> BufferedOutput:
-        self.data += chunk
-        return self
-
-    def receive(self) -> None:
-        # data may be empty/None so we test it
-        if read := self.file.read():
-            self += read
-
-    def close(self) -> None:
-        self.file.close()
-
-
-@dataclass(eq=False)
-class StagedOutput(BufferedOutput):
-    """High-performance buffer of data read from a given file object.
-
-    StagedOutput operates like BufferedOutput, with the distinction that
-    data is initially "staged", (in an internal list), for improved
-    performance. Upon close, this staged data is gathered into user-
-    readable data, (available by casting the object to str or bytes).
-
-    The descriptor of the given file object is presumed to be non-
-    blocking. This implementation is only necessary when performing very
-    large numbers of repeated read operations.
-
-    See: `ProgressiveOutput`.
-
-    """
-    _stage: list = field(default_factory=list, init=False)
-
-    def __iadd__(self, chunk) -> StagedOutput:
-        self._stage.append(chunk)
-        return self
-
-    def close(self) -> None:
-        super().close()
-        self.data += b''.join(self._stage)
-        self._stage.clear()
-
-
-class ProgressiveOutput(StagedOutput, threading.Thread):
-    """Buffer of data which may be read from the given file object in a
-    parallel thread.
-
-    As a StagedOutput, the descriptor of the given file object is
-    presumed to have been set non-blocking. A new daemon thread may be
-    launched via the `start` method, which will (repeatedly) read the
-    given file and store its output.
-
-    Read data may be made available for inspection, and the read file
-    closed, via the `stop` (alias `close`) method.
-
-    """
-    def __init__(self, file: typing.BinaryIO, thread_name: str | None):
-        super().__init__(file)
-        threading.Thread.__init__(self, name=thread_name, daemon=True)
-        self._closed = threading.Event()
-
-    def run(self):
-        while not self._closed.is_set():
-            time.sleep(1e-6)
-            self.receive()
-
-    def close(self):
-        self._closed.set()
-        self.join()
-        super().close()
-
-    stop = close
-
-
-@dataclass(eq=False)
-class BufferedInput:
-    """Buffer of data which is written to a given file object in chunks.
-
-    The descriptor of the given file may have been set blocking or non-
-    blocking. By default, it is assumed that this class is given a file
-    whose descriptor has been configured for non-blocking writes. In
-    this configuration, the `send` method may be invoked regularly,
-    without needlessly blocking execution.
-
-    """
-    data: bytes
-    file: typing.BinaryIO
-    buffersize: int = io.DEFAULT_BUFFER_SIZE
-    position: int = field(default=0, init=False)
-
-    @cachedproperty
-    def datasize(self):
-        return len(self.data)
-
-    @property
-    def finished(self) -> bool:
-        return self.file.closed
-
-    def send(self) -> None:
-        if self.finished:
-            return
-
-        chunk = self.data[self.position:self.buffersize]
-        self.file.write(chunk)
-
-        self.position = min(self.position + self.buffersize, self.datasize)
-
-        if self.position == self.datasize:
-            try:
-                self.file.close()
-            except BrokenPipeError:
-                pass
-
-
-def progressive_output(file: typing.BinaryIO, name: str | None) -> ProgressiveOutput:
-    """Launch a `ProgressiveOutput` reader in a parallel thread."""
-    os.set_blocking(file.fileno(), False)
-    reader = ProgressiveOutput(file, name)
-    reader.start()
-    return reader
-
-
-def nonblocking_output(file: typing.BinaryIO) -> BufferedOutput:
-    """Construct a `BufferedOutput` non-blocking reader of the given
-    file.
-
-    The descriptor of the given file is set non-blocking.
-
-    """
-    os.set_blocking(file.fileno(), False)
-    return BufferedOutput(file)
-
-
-def nonblocking_input(file: typing.BinaryIO, data: bytes) -> BufferedInput:
-    """Construct a `BufferedInput` non-blocking writer of the `data` to
-    `file`.
-
-    The descriptor of the given file is set non-blocking.
-
-    """
-    os.set_blocking(file.fileno(), False)
-    return BufferedInput(data, file)
-
-
 class _TaskProcess(typing.NamedTuple):
 
     process: subprocess.Popen
-    stdin: BufferedInput
-    statein: BufferedInput
-    stdout: ProgressiveOutput
-    stderr: BufferedOutput
-    stateout: BufferedOutput
+    stdin: stream.BufferedInput
+    statein: stream.BufferedInput
+    stdout: stream.ProgressiveOutput
+    stderr: stream.BufferedOutput
+    stateout: stream.BufferedOutput
 
 
-class SpawnedTask(BoundTask, InvokedTask):
+class SpawnedTask(ext.BoundTask, InvokedTask):
     """Task whose process has been spawned."""
 
     #
@@ -363,6 +167,9 @@ class SpawnedTask(BoundTask, InvokedTask):
         self.statein_ = None
         self.stateout_ = None
 
+        self._events_ = None
+        self._log_reader = None
+
     @property
     def stopped_(self) -> typing.Optional[float]:
         return self.killed_ or self.terminated_
@@ -381,6 +188,9 @@ class SpawnedTask(BoundTask, InvokedTask):
         ) = self._popen()
 
         self._started_ = time.time()
+
+        self._events_ = TaskEvents()
+        self._log_reader = LogReader(self.stderr_)
 
     def _preexec_legacy(self) -> None:
         # Assign (duplicate) state file descriptors to expected values
@@ -428,8 +238,8 @@ class SpawnedTask(BoundTask, InvokedTask):
             # stdout needn't be inspected until the task completes; and, synchronous, non-blocking
             # processing of the pipe is relatively inefficient (for large payloads). instead,
             # we'll launch a daemon thread to sit on it and read it as efficiently as possible.
-            stdout=progressive_output(process.stdout,
-                                      f'Reader ({self.__name__} {process.pid}): stdout'),
+            stdout=stream.progressive_output(process.stdout,
+                                             f'Reader ({self.__name__} {process.pid}): stdout'),
 
             # we don't expect any other IPC data to be huge; and, at least in the case of
             # stderr, we want to inspect it as it comes in.
@@ -437,11 +247,11 @@ class SpawnedTask(BoundTask, InvokedTask):
             # for simplicity: make pipe descriptors non-blocking & initialize buffer handlers
             #
             # (note: this works for pipes on Win32 but only as of Py312)
-            stderr=nonblocking_output(process.stderr),
-            stateout=nonblocking_output(self._stateoutfile_),
+            stderr=stream.nonblocking_output(process.stderr),
+            stateout=stream.nonblocking_output(self._stateoutfile_),
 
-            stdin=nonblocking_input(process.stdin, self.param_.encode()),
-            statein=nonblocking_input(self._stateinfile_, self._state_.read().encode()),
+            stdin=stream.nonblocking_input(process.stdin, self.param_.encode()),
+            statein=stream.nonblocking_input(self._stateinfile_, self._state_.read().encode()),
         )
 
         # write inputs (at least up to buffer size)
@@ -498,6 +308,28 @@ class SpawnedTask(BoundTask, InvokedTask):
         self._signal(signal.SIGKILL)
         self.killed_ = time.time()
 
+    def events_(self) -> typing.Optional[TaskEvents]:
+        if self._events_ is not None and not self._events_.closed:
+            self.poll_()
+
+        return self._events_
+
+    def _record_events_(self, returncode: typing.Optional[int]) -> None:
+        if self._events_ is None:
+            raise ValueError("task not spawned")
+
+        if self._events_.closed:
+            return
+
+        final = returncode is not None
+
+        for record in self._log_reader.read(final):
+            self._events_.write(TaskLogEvent(self, record))
+
+        if final:
+            self._events_.write(TaskReadyEvent(self, returncode))
+            self._events_.close()
+
     def poll_(self) -> typing.Optional[int]:
         """Check whether the task program has exited and return its exit
         code if any.
@@ -536,6 +368,8 @@ class SpawnedTask(BoundTask, InvokedTask):
             if returncode == 0:
                 self._state_.write(str(self.stateout_))
 
+        self._record_events_(returncode)
+
         return returncode
 
     def ready_(self) -> bool:
@@ -545,26 +379,6 @@ class SpawnedTask(BoundTask, InvokedTask):
 
         """
         return self.poll_() is not None
-
-    def logs_(self):
-        """Parse LogRecords from `stderr_`.
-
-        Raises LogsDecodingError to indicate decoding errors when the
-        encoding of a task's stderr log output is configured explicitly.
-        Note, in this case, the parsed logs *may still* be retrieved
-        from the exception.
-
-        """
-        if self.stderr_ is None:
-            return None
-
-        stream = self._iter_logs_(bytes(self.stderr_))
-        logs = tuple(stream)
-
-        if stream.status.errors:
-            raise LogsDecodingError(*stream.status, logs)
-
-        return logs
 
     @property
     @adopt('path')

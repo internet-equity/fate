@@ -128,7 +128,7 @@ class TaskLogger:
             level_ordinal = level_code // 10
             message = f'<{level_ordinal}> {message}'
 
-        print(message, end=self.end, file=self.file)
+        print(message, end=self.end, file=self.file, flush=True)
 
     def critical(self, *args, **kwargs):
         """Write a CRITICAL record to the configured file.

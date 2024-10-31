@@ -3,7 +3,7 @@ import argparse
 import os.path
 import sys
 
-from fate.conf import ResultEncodingError
+from fate.conf import ResultEncodeError
 
 from .. import Main, runcmd
 
@@ -62,12 +62,13 @@ class Debug(argcmdr.Command):
             args=spec.exec_,
             name=args.task,
             stdin=spec.param_.encode() if args.stdin is None else args.stdin,
+            timeout=(timeout := spec.timeout_) and timeout.total_seconds(),
         )
 
-        if args.record and result.returncode == 0:
+        if args.record and result and result.returncode == 0:
             try:
                 result_path = spec.path_._result_(result.stdout)
-            except ResultEncodingError as exc:
+            except ResultEncodeError as exc:
                 result_path = exc.identifier
 
                 print(f"result does not appear to be encoded as {exc.format}:",

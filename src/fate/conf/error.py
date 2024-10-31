@@ -29,16 +29,16 @@ class MultiConfError(ValueError, ConfError):
         return [str(path) for path in self.args]
 
 
-class LogsDecodingError(ValueError, ConfError):
+class LogRecordDecodeError(ValueError, ConfError):
 
-    def __init__(self, format_, errors, logs):
-        super().__init__(format_, errors, logs)
-        self.format = format_
-        self.errors = errors
-        self.logs = logs
+    def __init__(self, format, error, record):
+        super().__init__(format, error, record)
+        self.format = format
+        self.error = error
+        self.record = record
 
 
-class ResultEncodingError(ValueError, ConfError):
+class ResultEncodeError(ValueError, ConfError):
 
     def __init__(self, format_, errors, identifier):
         super().__init__(format_, errors, identifier)
@@ -47,7 +47,7 @@ class ResultEncodingError(ValueError, ConfError):
         self.identifier = identifier
 
 
-class StateEncodingError(ValueError, ConfError):
+class StateEncodeError(ValueError, ConfError):
 
     def __init__(self, format_, error):
         super().__init__(format_, error)
