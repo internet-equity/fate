@@ -70,3 +70,17 @@ def countas(iterable: typing.Iterable) -> typing.Iterable:
         yield item
 
     return count
+
+
+def returnboth(func):
+    @functools.wraps(func)
+    def wrapped(*args, **kwargs):
+        results = []
+        iterator = func(*args, **kwargs)
+        try:
+            while True:
+                results.append(next(iterator))
+        except StopIteration as stop:
+            return (stop.value, results)
+
+    return wrapped

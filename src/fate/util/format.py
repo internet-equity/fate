@@ -204,6 +204,12 @@ class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
     def __auto__(cls):
         return [member for member in cls if member.auto]
 
+    __abstract_formats__ = ('auto', 'mixed')
+
+    @classproperty
+    def __formats__(cls):
+        return [*cls.__abstract_formats__, *cls.__members__]
+
     @property
     def auto(self):
         return getattr(self.value, 'auto', False)
@@ -222,7 +228,12 @@ class SLoader(_NameList, _Raises, FileFormatEnum, CallableEnum):
         if not format_:
             return (None, None)
 
-        if format_ == 'auto' or format_ == 'mixed':
+        if isinstance(format_, str) or not isinstance(format_, collections.abc.Iterable):
+            formats = {format_}
+        else:
+            formats = set(format_)
+
+        if formats & {'auto', 'mixed'}:
             if not content:
                 return (None, None)
 

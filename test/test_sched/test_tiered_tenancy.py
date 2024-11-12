@@ -61,8 +61,11 @@ def test_due(confpatch, schedpatch):
     assert event.returncode == 0
     assert str(event.stdout) == 'done\n'
     assert str(event.stderr) == ''
-
     assert event.stopped is None
+
+    (result,) = event.results()
+    assert result.value == b'done\n'
+    assert result.path.name.endswith(event.task.__name__)
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
@@ -380,6 +383,146 @@ def test_bad_logs(confpatch, schedpatch):
     assert isinstance(ready_event, sched.TaskReadyEvent)
     assert ready_event.returncode == 0
     assert str(ready_event.stdout) == 'done\n'
+
+
+def test_results_ext(confpatch, schedpatch):
+    #
+    # configure a task's result file extension
+    #
+    confpatch.set_tasks(
+        {
+            'test-results': {
+                'exec': ['echo', 'done'],
+                'schedule': "H/5 * * * *",
+                'path': {
+                    'result': '{{ default }}.test',
+                },
+            },
+        }
+    )
+
+    #
+    # set up scheduler with a long-previous check s.t. task should execute
+    #
+    schedpatch.set_last_check(offset=3600)
+
+    #
+    # execute scheduler with captured logs
+    #
+    events = list(schedpatch.scheduler())
+
+    #
+    # task should run and this should be logged
+    #
+    assert len(events) == 1
+
+    (event,) = events
+    assert event.returncode == 0
+    assert str(event.stdout) == 'done\n'
+    assert str(event.stderr) == ''
+    assert event.stopped is None
+
+    (result,) = event.results()
+    assert result.value == b'done\n'
+
+    assert result.path.is_absolute()
+    assert result.path.parent.parent.name == 'fate'
+    assert result.path.parent.name == 'result'
+    assert result.path.name.endswith(f'-{event.task.__name__}.test')
+
+
+def test_results_empty(confpatch, schedpatch):
+    #
+    # configure a task which writes no results
+    #
+    confpatch.set_tasks(
+        {
+            'no-result': {
+                'shell': 'echo done >&2',
+                'schedule': "H/5 * * * *",
+            },
+        }
+    )
+
+    #
+    # set up scheduler with a long-previous check s.t. task should execute
+    #
+    schedpatch.set_last_check(offset=3600)
+
+    #
+    # execute scheduler
+    #
+    events = list(schedpatch.scheduler())
+
+    #
+    # task should run and this should be logged
+    #
+    assert len(events) == 2
+
+    (log_event, ready_event) = events
+
+    assert ready_event.stopped is None
+
+    assert ready_event.returncode == 0
+
+    assert bytes(ready_event.stdout) == b''
+
+    assert bytes(ready_event.stderr) == b'done\n'
+
+    assert ready_event.results() == []
+
+    assert isinstance(log_event, sched.TaskLogEvent)
+    assert log_event.record() == ('INFO', 'done\n')
+
+
+def test_results_disabled(confpatch, schedpatch):
+    #
+    # configure a task with no path to which to write its results
+    #
+    confpatch.set_tasks(
+        {
+            'results-disabled': {
+                'shell': '''\
+                    echo running >&2
+                    echo done
+                ''',
+                'schedule': "H/5 * * * *",
+                'path': {
+                    'result': None,
+                },
+            },
+        }
+    )
+
+    #
+    # set up scheduler with a long-previous check s.t. task should execute
+    #
+    schedpatch.set_last_check(offset=3600)
+
+    #
+    # execute scheduler
+    #
+    events = list(schedpatch.scheduler())
+
+    #
+    # task should run and this should be logged
+    #
+    assert len(events) == 2
+
+    (log_event, ready_event) = events
+
+    assert ready_event.stopped is None
+
+    assert ready_event.returncode == 0
+
+    assert bytes(ready_event.stdout) == b'done\n'
+
+    assert bytes(ready_event.stderr) == b'running\n'
+
+    assert ready_event.results() == []
+
+    assert isinstance(log_event, sched.TaskLogEvent)
+    assert log_event.record() == ('INFO', 'running\n')
 
 
 def test_timeout_noop(confpatch, schedpatch):

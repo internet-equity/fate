@@ -7,6 +7,8 @@ import typing
 from dataclasses import dataclass, field, InitVar
 
 from fate.common.log import LogRecord
+from fate.common.output import TaskOutput, TaskResult
+from fate.conf import OutputEncodeError, ResultEncodeError
 
 if typing.TYPE_CHECKING:
     import datetime
@@ -68,6 +70,21 @@ class TaskReadyEvent(TaskEvent):
     @property
     def stopped(self) -> typing.Optional[float]:
         return self.task.stopped_
+
+    def results(self) -> typing.List[TaskResult]:
+        try:
+            outputs = [*TaskOutput.parse(bytes(self.task.stdout_),
+                                         self.task.__lib__,
+                                         self.task.format_['result'])]
+        except OutputEncodeError as exc:
+            if result := TaskResult.compose(self.task, exc.output):
+                raise ResultEncodeError(result, exc.format, *exc.errors)
+
+            return []
+        else:
+            return [result
+                    for output in outputs
+                    if (result := TaskResult.compose(self.task, output))]
 
 
 @dataclass

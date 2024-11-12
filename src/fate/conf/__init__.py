@@ -9,6 +9,8 @@ from .error import (  # noqa: F401
     LogRecordDecodeError,
     MultiConfError,
     NoConfError,
+    StdoutEncodeError,
+    OutputEncodeError,
     ResultEncodeError,
     StateEncodeError,
 )

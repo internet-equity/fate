@@ -48,3 +48,8 @@ def render_str_list(contents, **context):
         return [render_str(contents, **context)]
 
     raise TypeError("expected str or list of str not " + contents.__class__.__name__)
+
+
+def render_template(string, mapping=(), **context) -> str:
+    template = environ.from_string(string)
+    return template.render(mapping, **context)
