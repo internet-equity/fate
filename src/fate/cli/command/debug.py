@@ -3,9 +3,9 @@ import argparse
 import os.path
 import sys
 
-from fate.conf import ResultEncodeError
+from fate.common.output import TaskOutput, TaskResult
 
-from .. import Main, runcmd
+from .. import CompletedDebugTask, Main, runcmd
 
 
 READABLE = argparse.FileType('rb')
@@ -38,11 +38,14 @@ class Debug(argcmdr.Command):
     @runcmd('-i', '--stdin', metavar='path|text', type=path_to_bytes,
             help="set standard input (parameterization) for command to given "
                  "path or text (specify '-' to pass through stdin)")
+    @runcmd('--format-result', default='auto', choices=TaskOutput.modes,
+            help="result format to detect (default: %(default)s)")
     def execute(context, args):
         """execute an arbitrary program as an ad-hoc task"""
         return context.Command(
             [args.command] + args.arguments,
             stdin=args.stdin or b'',
+            format_result=args.format_result,
         )
 
     @runcmd('task', help="name of configured task to run")
@@ -58,26 +61,22 @@ class Debug(argcmdr.Command):
         except KeyError:
             parser.error(f"task not found: '{args.task}'")
 
-        result = yield context.Command(
+        (proc, outputs) = yield context.Command(
             args=spec.exec_,
             name=args.task,
             stdin=spec.param_.encode() if args.stdin is None else args.stdin,
+            format_result=spec.format_['result'],
             timeout=(timeout := spec.timeout_) and timeout.total_seconds(),
         )
 
-        if args.record and result and result.returncode == 0:
-            try:
-                result_path = spec.path_._result_(result.stdout)
-            except ResultEncodeError as exc:
-                result_path = exc.identifier
+        if outputs and args.record and proc.returncode == 0:
+            completed_task = CompletedDebugTask.complete(spec)
 
-                print(f"result does not appear to be encoded as {exc.format}:",
-                      "will write to file without suffix",
-                      file=sys.stderr)
-
-            try:
-                context.write_result(result_path, result.stdout)
-            except NotADirectoryError as exc:
-                print('cannot record result: path or sub-path is not a directory:',
-                      exc.filename,
-                      file=sys.stderr)
+            for output in outputs:
+                if result := TaskResult.compose(completed_task, output):
+                    try:
+                        context.write_result(result.path, result.value)
+                    except NotADirectoryError as exc:
+                        print('cannot record result: path or sub-path is not a directory:',
+                              exc.filename,
+                              file=sys.stderr)

@@ -18,16 +18,10 @@ from fate.util.compat.path import readlink
 from fate.util.lazy import lazy_id
 from fate.util.log import StructLogger
 from fate.util.os import pid_exists
+from fate.util.term import snip
 from fate.util.timedelta import human_readable
 
 from .. import Main
-
-
-def snip(text, length=36, ellipsis=' ...'):
-    if len(text) <= length:
-        return text
-
-    return text[:length - len(ellipsis)] + ellipsis
 
 
 class ControlCommand(Main):
@@ -275,11 +269,11 @@ class ControlCommand(Main):
         logger.log(status_level, status_record)
 
         if status is self.CommandStatus.OK:
-            # Write task result (subprocess stdout)
+            # Write task result(s) (subprocess stdout)
             try:
-                result_path = event.task.path_.result_()
+                results = event.results()
             except ResultEncodeError as exc:
-                result_path = exc.identifier
+                results = [exc.result]
 
                 logger.warning(format=exc.format,
                                error=(str(exc.errors[0]) if len(exc.errors) == 1
@@ -287,16 +281,17 @@ class ControlCommand(Main):
                                msg="bad result encoding for configured format: "
                                    "path suffix ignored")
 
-            if result_path:
+            if not results:
+                logger.debug('result empty or record disabled')
+
+            for result in results:
                 try:
-                    self.write_result(result_path, bytes(event.stdout))
+                    self.write_result(result.path, result.value)
                 except NotADirectoryError as exc:
                     logger.error(f'cannot record result: '
                                  f'path or sub-path is not a directory: {exc.filename}')
                 except PermissionError as exc:
                     logger.error(f'cannot record result: permission denied: {exc.filename}')
-            else:
-                logger.debug('result empty or record disabled')
 
     def set_lock(self):
         """Set command's run-time lock.

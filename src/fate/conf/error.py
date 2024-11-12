@@ -38,13 +38,26 @@ class LogRecordDecodeError(ValueError, ConfError):
         self.record = record
 
 
-class ResultEncodeError(ValueError, ConfError):
+class StdoutEncodeError(ValueError, ConfError):
+    pass
 
-    def __init__(self, format_, errors, identifier):
-        super().__init__(format_, errors, identifier)
-        self.format = format_
+
+class OutputEncodeError(StdoutEncodeError):
+
+    def __init__(self, output, format, *errors):
+        super().__init__(output, format, errors)
+        self.format = format
         self.errors = errors
-        self.identifier = identifier
+        self.output = output
+
+
+class ResultEncodeError(StdoutEncodeError):
+
+    def __init__(self, result, format, *errors):
+        super().__init__(result, format, errors)
+        self.format = format
+        self.errors = errors
+        self.result = result
 
 
 class StateEncodeError(ValueError, ConfError):

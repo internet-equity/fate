@@ -1,10 +1,11 @@
 import collections
 import functools
+import os.path
 import pathlib
 import re
 import typing
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 from enum import IntEnum
 
 import croniter
@@ -12,6 +13,7 @@ import jinja2
 from descriptors import classproperty
 
 from fate.util.compat.os import cpu_count
+from fate.util.compat.types import NoneType
 from fate.util.format import Dumper, SLoader
 from fate.util.sentinel import Undefined
 from fate.util.timedelta import parse_timedelta
@@ -28,7 +30,6 @@ from ..error import (
     ConfBracketError,
     ConfTypeError,
     ConfValueError,
-    ResultEncodeError,
 )
 
 from .base import (
@@ -333,6 +334,19 @@ class TaskConfType(ConfType):
             self._DefaultFormat.__members__,
         )
 
+    @property
+    def _default_path_result(self) -> str:
+        return str(
+            self._prefix_.data
+            / 'result'
+            / "result"
+              "-{{ task_ended_at.timestamp() | int }}"
+              "-{{ task_ended_at.strftime('%Y%m%dT%H%M%S') }}"
+              "-{{ task_name }}"
+              "{{ label_ext }}"
+              "{{ ext }}"
+        )
+
     @at_depth(0)
     @property
     @adopt('path')
@@ -340,7 +354,7 @@ class TaskConfType(ConfType):
         return TaskChainMap(
             self.get('path', {}),
             self.__default__.get('path', {}),
-            {'result': self._prefix_.data / 'result'},
+            {'result': self._default_path_result},
         )
 
     @at_depth(0)
@@ -364,80 +378,37 @@ class TaskConfType(ConfType):
             return dumper(param)
 
     @at_depth('*.path')
-    def _result_(self, stdout: bytes, dt=None):
-        result_spec = self.result
+    def result_(self, **context) -> str:
+        spec = self.result
 
-        if not result_spec:
-            # empty path.result synonymous with /dev/null: quit
-            return None
+        if not isinstance(spec, (str, NoneType)):
+            raise ConfTypeError(f"{self.__path__}.result: expected string or null not "
+                                f"{spec.__class__.__name__}")
 
-        format_ = self.__parent__.format_['result']
+        # empty path.result synonymous with /dev/null: quit
+        if not spec:
+            return ''
 
-        if format_ == 'auto' and not stdout:
-            # auto (unlike mixed) suppresses empty results: quit
-            return None
+        default_path = pathlib.Path(
+            template.render_template(self._default_path_result, context).strip()
+        )
 
-        if dt is None:
-            dt = datetime.now()
+        if not (path := template.render_template(spec, context, default=default_path).strip()):
+            return ''
 
-        stamp = dt.timestamp()
-        datestr = dt.strftime('%Y%m%dT%H%M%S')
+        (path_dir, path_base) = os.path.split(path)
 
-        result_path = (result_spec if isinstance(result_spec, pathlib.Path)
-                       else pathlib.Path(result_spec))
+        if path_dir and path_base:
+            # all good
+            return path
 
-        identifier = result_path / f'result-{stamp:.0f}-{datestr}-{self.__parent__.__name__}'
+        # fill in blanks with application default
+        (default_dir, default_base) = os.path.split(default_path)
 
-        try:
-            (_struct, loader) = self._Loader.autoload(stdout, format_)
-        except self._Loader.NonAutoError:
-            binary = stdout
+        if path_dir:
+            return os.path.join(path_dir, default_base)
 
-            try:
-                text = binary.decode()
-            except UnicodeDecodeError as exc:
-                decode_exc = exc
-                text = None
-            else:
-                decode_exc = None
-
-            if isinstance(format_, str) or not isinstance(format_, collections.abc.Iterable):
-                formats = (format_,)
-            else:
-                formats = format_
-
-            errors = []
-
-            for format1 in formats:
-                try:
-                    loader = self._Loader[format1]
-                except KeyError:
-                    raise ConfValueError(
-                        self._result_format_error.format(
-                            conf_path=f'{self.__parent__.__name__}.format.result',
-                            format_=format1,
-                        )
-                    )
-
-                encoded = binary if loader.binary else text
-
-                if encoded is None:
-                    errors.append(decode_exc)
-                    continue
-
-                try:
-                    decoding = loader(encoded)
-                except loader.raises as exc:
-                    errors.append(exc)
-                else:
-                    if isinstance(decoding, self._Loader.Decoding):
-                        loader = decoding.decoder
-
-                    break
-            else:
-                raise ResultEncodeError(format_, errors, identifier)
-
-        return identifier.with_suffix(loader.suffix) if loader else identifier
+        return os.path.join(default_dir, path_base)
 
 
 class TaskConfDict(TaskConfType, ConfDict):

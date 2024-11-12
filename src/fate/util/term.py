@@ -20,3 +20,10 @@ def getche(n=1, /, infile=sys.stdin, outfile=sys.stdout, end=''):
     result = getch(n, infile)
     print(result, end=end, file=outfile)
     return result
+
+
+def snip(text, length=36, ellipsis=' ...'):
+    if len(text) <= length:
+        return text
+
+    return text[:length - len(ellipsis)] + ellipsis

@@ -4,10 +4,17 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import textwrap
+import time
 import typing
 
 import argcmdr
+
+from fate.common.ext import CompletingTask, TaskConfExt
+from fate.common.output import TaskOutput
+from fate.conf import OutputEncodeError
+from fate.util.term import snip
 
 from .common import CommandInterface
 
@@ -24,7 +31,15 @@ class OneOffExecutor(CommandInterface, argcmdr.Command):
         args: typing.Sequence[str]
         name: str = ''
         stdin: bytes = b''
+        format_result: typing.Sequence[str] = ('auto',)
         timeout: typing.Optional[int] = None
+
+    @staticmethod
+    def snip_many(iterable, maxlen, cast=str):
+        contents = ', '.join(cast(item) for item in iterable)
+        if len(contents) > maxlen - 2:
+            contents = contents[:maxlen - 6] + ' ...'
+        return f'({contents})'
 
     @staticmethod
     def print_output(name, text):
@@ -37,8 +52,28 @@ class OneOffExecutor(CommandInterface, argcmdr.Command):
         else:
             print(f'{name}:', text)
 
+    @staticmethod
+    def present_outputs(outputs):
+        for task_output in outputs:
+            if task_output.label:
+                label = '{}{}'.format(task_output.label, task_output.ext)
+            elif task_output.ext:
+                label = f'[{task_output.ext}]'
+            else:
+                label = '<unrecognized>'
+
+            try:
+                text = snip(task_output.value.strip().decode(), 300)
+            except UnicodeDecodeError:
+                text = "<non-text output>"
+
+            if '\n' in text:
+                yield label + '\n\n' + textwrap.indent(text, '  ')
+            else:
+                yield f'{label}: {text}'
+
     @classmethod
-    def print_report(cls, command, retcode, stdout, stderr, error):
+    def print_report(cls, command, retcode, outputs, stderr, error):
         """Print a report of task command execution outcomes."""
         print('Name:', command.name or '-')
 
@@ -60,10 +95,7 @@ class OneOffExecutor(CommandInterface, argcmdr.Command):
 
         print()
 
-        try:
-            output = stdout.decode()
-        except UnicodeDecodeError:
-            output = "<binary or bad output>"
+        output = '\n\n'.join(cls.present_outputs(outputs))
 
         cls.print_output('Result', output or '-')
 
@@ -150,9 +182,21 @@ class OneOffExecutor(CommandInterface, argcmdr.Command):
                 stdout = result.stdout
                 stderr = result.stderr
 
+            try:
+                outputs = (*TaskOutput.parse(stdout, self.conf._lib_, command.format_result),)
+            except OutputEncodeError as exc:
+                outputs = (exc.output,)
+
+                print("Warn: bad result encoding for configured format",
+                      f'{exc.format!r}:',
+                      "path suffix ignored:",
+                      self.snip_many(exc.errors, 65, repr),
+                      file=sys.stderr)
+                print()
+
             if send:
                 try:
-                    send(result)
+                    send((result, outputs))
                 except StopIteration:
                     pass
                 else:
@@ -161,6 +205,7 @@ class OneOffExecutor(CommandInterface, argcmdr.Command):
             if args.stdout:
                 args.stdout.write(stdout)
                 stdout = f'[See {args.stdout.name}]'
+                outputs = (TaskOutput(stdout, '<stored>'),)
                 args.stdout.close()
 
             if args.stderr:
@@ -169,7 +214,7 @@ class OneOffExecutor(CommandInterface, argcmdr.Command):
                 args.stderr.close()
 
             if args.report:
-                self.print_report(command, returncode, stdout, stderr, error)
+                self.print_report(command, returncode, outputs, stderr, error)
 
     def get_command(self, args):
         """Determine task name (if any) and command to execute
@@ -189,3 +234,17 @@ function defining method `get_command`.
 """
 runcmd = functools.partial(argcmdr.cmd, base=OneOffExecutor,
                            binding=True, method_name='get_command')
+
+
+class CompletedDebugTask(TaskConfExt, CompletingTask):
+
+    @TaskConfExt._constructor_
+    def complete(cls, task, *args, **kwargs):
+        return cls(task, *args, **kwargs)
+
+    def __init__(self, data, ended=0):
+        super().__init__(data)
+        self._ended_ = ended or time.time()
+
+    def ended_(self):
+        return self._ended_

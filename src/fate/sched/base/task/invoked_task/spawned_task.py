@@ -13,9 +13,8 @@ import typing
 from descriptors import cachedproperty, classonlymethod
 
 from fate.common.log import LogReader
-from fate.conf.types import TaskChainMap
+from fate.common.output import CompletingTask
 from fate.util import stream
-from fate.util.datastructure import at_depth, adopt
 
 from .. import ext
 
@@ -60,7 +59,7 @@ class _TaskProcess(typing.NamedTuple):
     stateout: stream.BufferedOutput
 
 
-class SpawnedTask(ext.BoundTask, InvokedTask):
+class SpawnedTask(ext.BoundTask, InvokedTask, CompletingTask):
     """Task whose process has been spawned."""
 
     #
@@ -379,16 +378,3 @@ class SpawnedTask(ext.BoundTask, InvokedTask):
 
         """
         return self.poll_() is not None
-
-    @property
-    @adopt('path')
-    def path_(self):
-        default = super().path_
-        return SpawnedTaskChainMap(*default.maps)
-
-
-class SpawnedTaskChainMap(TaskChainMap):
-
-    @at_depth('*.path')
-    def result_(self, *args, **kwargs):
-        return self._result_(bytes(self.__parent__.stdout_), *args, **kwargs)
