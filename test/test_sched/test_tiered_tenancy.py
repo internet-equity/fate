@@ -186,9 +186,12 @@ def test_large_result(confpatch, schedpatch):
 
     assert logs.field_equals(completed=1, total=1, active=0)
 
-    assert event.duration.total_seconds() < 1
+    # timing is machine-dependent -- and should really be *very* quick -- but we can't ensure this
+    # across test platforms. rather, the below duration is a compromise, and "fast" relative to
+    # previous stdout-reading implementations.
+    assert event.duration.total_seconds() < 5
 
-    assert session.seconds < 1
+    assert session.seconds < 5
 
     assert len(bytes(event.stdout)) == HUNDRED_MB
 
@@ -313,13 +316,16 @@ def test_bad_logs(confpatch, schedpatch):
     confpatch.set_tasks(
         {
             'logs': {
+                # echo is annoyingly inconsistent across platforms
+                # -- at least as far as the -n option (no trailing newline)
+                # printf should be reliable
                 'shell': r'''
-                    echo -n '{bad json...\0' >&2
-                    echo -n 'not unicode!\0' | gzip -c >&2
-                    echo -n '{"technically": "fine"}\0' >&2
-                    echo -n 'no terminator remainder' >&2
+                    printf '{bad json...\0' >&2
+                    printf 'not unicode!\0' | gzip -c >&2
+                    printf '{"technically": "fine"}\0' >&2
+                    printf 'no terminator remainder' >&2
 
-                    echo 'done'
+                    echo done
                 ''',
                 'schedule': '0 * * * *',
                 'format': {'log': 'json'},
@@ -338,11 +344,12 @@ def test_bad_logs(confpatch, schedpatch):
     events = list(schedpatch.scheduler())
 
     #
-    # compressed data will contain null bytes s.t. it is interpreted as 3 bad records
+    # compressed data will contain null bytes s.t. it is interpreted as ~3 bad records
+    # (but this might be inconsistent across platforms)
     #
-    assert len(events) == 7
+    assert len(events) > 5
 
-    (log_event0, log_event1, log_event2, log_event3, log_event4, log_event5, ready_event) = events
+    (log_event0, *gzip_events, log_event_n0, log_event_n1, ready_event) = events
 
     assert isinstance(log_event0, sched.TaskLogEvent)
 
@@ -355,30 +362,26 @@ def test_bad_logs(confpatch, schedpatch):
     assert isinstance(exc.value.error, json.JSONDecodeError)
     assert exc.value.record == ('INFO', log_event0.message.decode())
 
-    assert isinstance(log_event1, sched.TaskLogEvent)
-    assert isinstance(log_event2, sched.TaskLogEvent)
-    assert isinstance(log_event3, sched.TaskLogEvent)
+    assert gzip_events
+    for event in gzip_events:
+        assert isinstance(event, sched.TaskLogEvent)
 
-    with pytest.raises(UnicodeDecodeError):
-        log_event1.record()
-    with pytest.raises(UnicodeDecodeError):
-        log_event2.record()
-    with pytest.raises(UnicodeDecodeError):
-        log_event3.record()
+        with pytest.raises(UnicodeDecodeError):
+            event.record()
 
-    assert isinstance(log_event4, sched.TaskLogEvent)
-    assert log_event4.message == b'{"technically": "fine"}'
-    assert log_event4.record() == ('INFO', {"technically": "fine"})
+    assert isinstance(log_event_n0, sched.TaskLogEvent)
+    assert log_event_n0.message == b'{"technically": "fine"}'
+    assert log_event_n0.record() == ('INFO', {"technically": "fine"})
 
-    assert isinstance(log_event5, sched.TaskLogEvent)
-    assert log_event5.message == b'no terminator remainder'
+    assert isinstance(log_event_n1, sched.TaskLogEvent)
+    assert log_event_n1.message == b'no terminator remainder'
 
     with pytest.raises(LogRecordDecodeError) as exc:
-        log_event5.record()
+        log_event_n1.record()
 
     assert exc.value.format == 'json'
     assert isinstance(exc.value.error, json.JSONDecodeError)
-    assert exc.value.record == ('INFO', log_event5.message.decode())
+    assert exc.value.record == ('INFO', log_event_n1.message.decode())
 
     assert isinstance(ready_event, sched.TaskReadyEvent)
     assert ready_event.returncode == 0
