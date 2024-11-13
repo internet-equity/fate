@@ -366,7 +366,7 @@ def test_bad_logs(confpatch, schedpatch):
     for event in gzip_events:
         assert isinstance(event, sched.TaskLogEvent)
 
-        with pytest.raises(UnicodeDecodeError):
+        with pytest.raises((LogRecordDecodeError, UnicodeDecodeError)):
             event.record()
 
     assert isinstance(log_event_n0, sched.TaskLogEvent)
