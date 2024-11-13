@@ -9,6 +9,7 @@ authors = [
   "Kyle MacMillan <macmillan@uchicago.edu>",
 ]
 packages = [{include = "fate", from = "src"}]
+readme = "readme.adoc"
 
 [tool.poetry.dependencies]
 python = "^3.8"
