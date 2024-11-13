@@ -53,11 +53,6 @@ on:
       pypi-test:
         type: boolean
         required: false
-    secrets:
-      PYPI_TOKEN:
-        required: true
-      TEST_PYPI_TOKEN:
-        required: true
 
 env:
   GIT_COMMITTER_NAME: github-actions[bot]
@@ -73,22 +68,6 @@ jobs:
       git-tags: ${{ steps.tags.outputs.git-tags }}
 
     steps:
-      - name: Check required secrets
-        shell: python
-        run: |
-          secrets = (
-              ('PYPI_TOKEN', '${{ secrets.PYPI_TOKEN }}'),
-              ('TEST_PYPI_TOKEN', '${{ secrets.TEST_PYPI_TOKEN }}'),
-          )
-
-          missing = [name for (name, value) in secrets if not value]
-
-          if missing:
-              for name in missing:
-                  print("::error::Secret undefined:", name)
-
-              raise SystemExit(1)
-
       - name: Check out repository
         uses: actions/checkout@v3
         with:
@@ -185,6 +164,7 @@ jobs:
 
     permissions:
       contents: write
+      id-token: write
 
     steps:
       - name: Configure publishing changeset author
@@ -224,26 +204,21 @@ jobs:
       - name: Set library version
         run: poetry version "${{ inputs.version }}"
 
-      - name: Configure Test PyPI
-        id: configure-repo
+      - name: Build
+        run: poetry build
+
+      - name: Publish to PyPI
+        if: ! inputs.pypi-test
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Publish to Test PyPI
         if: inputs.pypi-test
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ env.TEST_PYPI }}
+
+      - name: Annotate publishing
         run: |
-          poetry config repositories.test-pypi "$TEST_PYPI"
-
-          # env var apparently insufficient when publishing to non-main repo
-          poetry config pypi-token.test-pypi ${{ secrets.TEST_PYPI_TOKEN }}
-
-          echo "publish-repo-flag=--repository=test-pypi" >> "$GITHUB_OUTPUT"
-
-      - name: Build & publish
-        env:
-          # if not test then env var should be sufficient to publish to main pypi
-          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_TOKEN }}
-        run: |
-          # build and publish
-          poetry publish --build ${{ steps.configure-repo.outputs.publish-repo-flag }}
-
-          # write summary information
           LIB_SIG="$(poetry version)"
 
           LIB_NAME="$(echo "$LIB_SIG" | awk '{print $1}')"
