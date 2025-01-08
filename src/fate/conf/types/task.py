@@ -389,11 +389,15 @@ class TaskConfType(ConfType):
         if not spec:
             return ''
 
-        default_path = pathlib.Path(
-            template.render_template(self._default_path_result, context).strip()
-        )
+        default_path = template.render_template(self._default_path_result, context).strip()
 
-        if not (path := template.render_template(spec, context, default=default_path).strip()):
+        if spec == self._default_path_result:
+            # no need to render default path twice
+            return default_path
+
+        path = template.render_template(spec, context, default=pathlib.Path(default_path)).strip()
+
+        if not path:
             return ''
 
         (path_dir, path_base) = os.path.split(path)
