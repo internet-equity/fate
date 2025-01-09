@@ -5,7 +5,7 @@ import pathlib
 import re
 import typing
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import IntEnum
 
 import croniter
@@ -192,6 +192,20 @@ class TaskConfType(ConfType):
             self._DefaultScheduling.__members__,
         )
 
+    @property
+    def __trunk__(self):
+        try:
+            return self.__parents__[-2]
+        except IndexError:
+            return self
+
+    @property
+    def _context(self):
+        return {
+            'now': datetime.now(),
+            'task_name': self.__trunk__.__name__,
+        }
+
     @at_depth(0)
     @property
     def exec_(self) -> typing.Tuple[str]:
@@ -203,7 +217,7 @@ class TaskConfType(ConfType):
 
         if 'exec' in self:
             try:
-                return tuple(template.render_str_list(self['exec']))
+                return tuple(template.render_str_list(self['exec'], **self._context))
             except TypeError:
                 raise ConfTypeError(f'{self.__name__}: "exec" requires string or list of strings '
                                     f"not: {self['exec']!r}")
@@ -246,7 +260,7 @@ class TaskConfType(ConfType):
                 )
 
             try:
-                return (executable, '-c', template.render_str(script))
+                return (executable, '-c', template.render_str(script, **self._context))
             except jinja2.TemplateError as exc:
                 raise ConfValueError(f"{exc.__class__.__name__} @ {self.__path__}.shell: {exc}")
 
@@ -285,7 +299,7 @@ class TaskConfType(ConfType):
         target = bracket_match['expr'] if bracket_match else expression
 
         try:
-            evaluation = template.eval_expr(target)
+            evaluation = template.eval_expr(target, **self._context)
         except jinja2.TemplateError as exc:
             raise ConfValueError(f"{exc.__class__.__name__} @ {self.__path__}.{key}: {exc}")
 
@@ -389,13 +403,21 @@ class TaskConfType(ConfType):
         if not spec:
             return ''
 
-        default_path = template.render_template(self._default_path_result, context).strip()
+        default_context = self._context
+        default_spec = self._default_path_result
 
-        if spec == self._default_path_result:
+        default_path = template.render_template(default_spec,
+                                                default_context,
+                                                **context).strip()
+
+        if spec == default_spec:
             # no need to render default path twice
             return default_path
 
-        path = template.render_template(spec, context, default=pathlib.Path(default_path)).strip()
+        path = template.render_template(spec,
+                                        default_context,
+                                        default=pathlib.Path(default_path),
+                                        **context).strip()
 
         if not path:
             return ''
