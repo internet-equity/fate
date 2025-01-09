@@ -202,7 +202,6 @@ class TaskResult(typing.NamedTuple):
             label=output.label,
             label_ext=output.label and f'-{output.label}',
             task_ended_at=datetime.datetime.fromtimestamp(task.ended_()),
-            task_name=task.__name__,
         )
 
         return cls(
